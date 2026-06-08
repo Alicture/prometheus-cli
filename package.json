@@ -1,0 +1,35 @@
+{
+  "name": "prometheus-cli",
+  "version": "0.1.0",
+  "description": "Prometheus — a React + Ink terminal client for agentic coding in a configurable Docker or remote sandbox. A terminal reimplementation of the Prometheus SwiftUI app.",
+  "type": "module",
+  "bin": {
+    "prometheus": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "ink": "^5.0.1",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "meow": "^13.2.0",
+    "react": "^18.3.1",
+    "ssh2": "^1.16.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.11",
+    "@types/ssh2": "^1.15.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
