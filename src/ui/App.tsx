@@ -56,7 +56,10 @@ export function App({ config }: { config: Config }) {
         break;
       }
       case 'env':
-        agent.pushNotice(`Environment: ${agent.envLabel} · workdir ${config.environment}`);
+        agent.pushNotice(
+          `Environment: ${agent.envLabel}\n` +
+            `API: ${config.apiFormat} · base URL: ${config.baseURL || '(provider default)'}`,
+        );
         break;
       case 'clear':
         agent.clear();

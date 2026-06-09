@@ -113,8 +113,23 @@ export function modelForTier(config: Config, tier: Tier = config.selectedTier): 
 }
 
 // Allow API key / base URL to come from the environment as a convenience.
+// The explicit config value always wins; env vars are fallbacks. Several
+// common aliases are accepted so existing Anthropic/proxy setups just work.
 export function withEnvOverrides(config: Config): Config {
-  const apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY || process.env.PROMETHEUS_API_KEY || '';
-  const baseURL = config.baseURL || process.env.ANTHROPIC_BASE_URL || '';
+  const env = process.env;
+  const firstNonEmpty = (...vals: (string | undefined)[]): string =>
+    vals.find((v) => v && v.trim() !== '')?.trim() ?? '';
+
+  const apiKey = config.apiKey || firstNonEmpty(
+    env.ANTHROPIC_API_KEY,
+    env.ANTHROPIC_AUTH_TOKEN,
+    env.PROMETHEUS_API_KEY,
+  );
+  const baseURL = config.baseURL || firstNonEmpty(
+    env.ANTHROPIC_BASE_URL,
+    env.ANTHROPIC_API_URL,
+    env.ANTHROPIC_API_BASE,
+    env.PROMETHEUS_BASE_URL,
+  );
   return { ...config, apiKey, baseURL };
 }
