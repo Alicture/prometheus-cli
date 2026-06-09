@@ -110,12 +110,31 @@ prometheus config set ssh.workspace '~/project'
 | Command | Action |
 |---------|--------|
 | `/help` | show help |
-| `/model <tier>` | switch model tier |
-| `/env` | show current environment |
+| `/model` | open the interactive model picker |
+| `/model <tier>` | switch model tier (hermes / athena / zeus) |
+| `/model set <tier> <id>` | set the model ID for a tier |
+| `/env` | show current environment + API base URL |
 | `/clear` | clear the conversation |
 | `/quit` | exit |
 | `Esc` | abort the current turn |
 | `Ctrl+C` | exit |
+
+### Model picker
+
+`/model` (no argument) opens an interactive picker:
+
+- `↑` / `↓` — move between tiers
+- `↵` — make the highlighted tier active
+- `e` — edit the highlighted tier's model ID inline
+- `esc` — close
+
+The same configuration is available from the CLI without launching the TUI:
+
+```bash
+prometheus models                              # list tiers + model IDs
+prometheus models use athena                   # set the active tier
+prometheus models set zeus claude-opus-4-1     # change a tier's model ID
+```
 
 ## Architecture
 

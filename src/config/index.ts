@@ -17,6 +17,20 @@ export const TIER_LABELS: Record<Tier, string> = {
   zeus: 'Zeus',
 };
 
+// Config field backing each tier's model ID.
+export const MODEL_FIELD: Record<Tier, 'modelHermes' | 'modelAthena' | 'modelZeus'> = {
+  hermes: 'modelHermes',
+  athena: 'modelAthena',
+  zeus: 'modelZeus',
+};
+
+export const ALL_TIERS: Tier[] = ['hermes', 'athena', 'zeus'];
+
+// Mutate the model ID for a tier in place (callers persist with saveConfig).
+export function setModelForTier(config: Config, tier: Tier, modelId: string): void {
+  config[MODEL_FIELD[tier]] = modelId;
+}
+
 // Where to run tool commands: a Docker container, a remote SSH host, or
 // directly on the local machine. This is the core "configurable environment".
 export const EnvironmentSchema = z.enum(['docker', 'ssh', 'local']);

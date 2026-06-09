@@ -1,20 +1,30 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text, Static, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import type { Config, Tier } from '../config/index.js';
-import { modelForTier, saveConfig, TierSchema, TIER_LABELS } from '../config/index.js';
+import {
+  modelForTier,
+  saveConfig,
+  setModelForTier,
+  TierSchema,
+  TIER_LABELS,
+  ALL_TIERS,
+} from '../config/index.js';
 import { theme } from './theme.js';
 import { useAgent } from './hooks/useAgent.js';
 import { Header } from './components/Header.js';
 import { MessageItem } from './components/MessageItem.js';
 import { StatusBar } from './components/StatusBar.js';
+import { ModelPicker, type TierRow } from './components/ModelPicker.js';
 
 const HELP = [
-  '/help            show this help',
-  '/model <tier>    switch model tier: hermes | athena | zeus',
-  '/env             show the current execution environment',
-  '/clear           clear the conversation',
-  '/quit            exit Prometheus',
+  '/help                 show this help',
+  '/model                open the interactive model picker',
+  '/model <tier>         switch tier: hermes | athena | zeus',
+  '/model set <t> <id>   set the model ID for a tier',
+  '/env                  show the current execution environment',
+  '/clear                clear the conversation',
+  '/quit                 exit Prometheus',
   '',
   'Esc aborts the current turn. Ctrl+C exits.',
 ].join('\n');
@@ -24,37 +34,72 @@ export function App({ config }: { config: Config }) {
   const agent = useAgent(config);
   const [input, setInput] = useState('');
   const [tier, setTier] = useState<Tier>(config.selectedTier);
+  // Mirror tier model IDs in state so edits re-render the header/picker.
+  const [models, setModels] = useState({
+    hermes: config.modelHermes,
+    athena: config.modelAthena,
+    zeus: config.modelZeus,
+  });
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     void agent.begin();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const model = useMemo(() => modelForTier({ ...config, selectedTier: tier }), [config, tier]);
+  const model = models[tier];
 
   useInput((_input, key) => {
+    if (pickerOpen) return;
     if (key.escape && agent.status.busy) agent.abort();
   });
 
+  const switchTier = (next: Tier) => {
+    setTier(next);
+    config.selectedTier = next;
+    saveConfig(config);
+    agent.pushNotice(`Model tier → ${TIER_LABELS[next]} (${models[next]})`);
+  };
+
+  const editModel = (target: Tier, modelId: string) => {
+    setModelForTier(config, target, modelId);
+    saveConfig(config);
+    setModels((m) => ({ ...m, [target]: modelId }));
+    agent.pushNotice(`${TIER_LABELS[target]} model → ${modelId}`);
+  };
+
+  const handleModelCommand = (rest: string[]) => {
+    if (rest.length === 0) {
+      setPickerOpen(true);
+      return;
+    }
+    if (rest[0] === 'set') {
+      const parsed = TierSchema.safeParse(rest[1]);
+      const id = rest.slice(2).join(' ').trim();
+      if (!parsed.success || !id) {
+        agent.pushNotice('Usage: /model set <hermes|athena|zeus> <model-id>', 'error');
+        return;
+      }
+      editModel(parsed.data, id);
+      return;
+    }
+    const parsed = TierSchema.safeParse(rest[0]);
+    if (!parsed.success) {
+      agent.pushNotice('Usage: /model [tier] | /model set <tier> <id>', 'error');
+      return;
+    }
+    switchTier(parsed.data);
+  };
+
   const runCommand = (raw: string) => {
     const [cmd, ...rest] = raw.slice(1).trim().split(/\s+/);
-    const arg = rest.join(' ');
     switch (cmd) {
       case 'help':
         agent.pushNotice('\n' + HELP);
         break;
-      case 'model': {
-        const parsed = TierSchema.safeParse(arg);
-        if (!parsed.success) {
-          agent.pushNotice('Usage: /model hermes | athena | zeus', 'error');
-          break;
-        }
-        setTier(parsed.data);
-        config.selectedTier = parsed.data;
-        saveConfig(config);
-        agent.pushNotice(`Model tier → ${TIER_LABELS[parsed.data]} (${modelForTier(config)})`);
+      case 'model':
+        handleModelCommand(rest);
         break;
-      }
       case 'env':
         agent.pushNotice(
           `Environment: ${agent.envLabel}\n` +
@@ -114,15 +159,25 @@ export function App({ config }: { config: Config }) {
 
         <StatusBar status={agent.status} tier={tier} model={model} />
 
-        <Box>
-          <Text color={theme.accent}>{agent.status.busy ? '… ' : '› '}</Text>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder={agent.ready ? 'Ask Prometheus, or /help' : 'starting sandbox…'}
+        {pickerOpen ? (
+          <ModelPicker
+            rows={ALL_TIERS.map<TierRow>((t) => ({ tier: t, label: TIER_LABELS[t], modelId: models[t] }))}
+            current={tier}
+            onSwitch={switchTier}
+            onEdit={editModel}
+            onClose={() => setPickerOpen(false)}
           />
-        </Box>
+        ) : (
+          <Box>
+            <Text color={theme.accent}>{agent.status.busy ? '… ' : '› '}</Text>
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={onSubmit}
+              placeholder={agent.ready ? 'Ask Prometheus, or /help' : 'starting sandbox…'}
+            />
+          </Box>
+        )}
       </Box>
     </Box>
   );
