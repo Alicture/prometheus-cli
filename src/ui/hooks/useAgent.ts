@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
+import { SkillManager, type Skill } from '../../skills/index.js';
 import type { AgentEvent } from '../../types.js';
 import type { UIItem, UIStatus } from '../types.js';
 
@@ -19,11 +20,18 @@ export interface UseAgent {
   abort: () => void;
   pushNotice: (text: string, level?: 'info' | 'error') => void;
   clear: () => void;
+  listSkills: () => Skill[];
+  installSkill: (spec: string) => Promise<void>;
+  removeSkill: (name: string) => void;
 }
 
 export function useAgent(config: Config): UseAgent {
+  const skillsRef = useRef<SkillManager | null>(null);
+  if (!skillsRef.current) skillsRef.current = new SkillManager();
+  const skills = skillsRef.current;
+
   const sessionRef = useRef<AgentSession | null>(null);
-  if (!sessionRef.current) sessionRef.current = new AgentSession(config);
+  if (!sessionRef.current) sessionRef.current = new AgentSession(config, skills);
   const session = sessionRef.current;
 
   const [history, setHistory] = useState<UIItem[]>([]);
@@ -166,5 +174,45 @@ export function useAgent(config: Config): UseAgent {
 
   const envLabel = useMemo(() => session.describeEnvironment(), [session]);
 
-  return { history, live, status, ready, startup, envLabel, begin, send, abort, pushNotice, clear };
+  const listSkills = useCallback(() => session.skillList, [session]);
+
+  const installSkill = useCallback(
+    async (spec: string) => {
+      pushNotice(`Installing skill from ${spec}…`);
+      try {
+        const names = await skills.installFromGitHub(spec);
+        session.reloadSkills();
+        pushNotice(`Installed skill(s): ${names.join(', ')}`);
+      } catch (err) {
+        pushNotice(`Skill install failed: ${(err as Error).message}`, 'error');
+      }
+    },
+    [skills, session, pushNotice],
+  );
+
+  const removeSkill = useCallback(
+    (name: string) => {
+      const ok = skills.remove(name);
+      session.reloadSkills();
+      pushNotice(ok ? `Removed skill: ${name}` : `Skill not found: ${name}`, ok ? 'info' : 'error');
+    },
+    [skills, session, pushNotice],
+  );
+
+  return {
+    history,
+    live,
+    status,
+    ready,
+    startup,
+    envLabel,
+    begin,
+    send,
+    abort,
+    pushNotice,
+    clear,
+    listSkills,
+    installSkill,
+    removeSkill,
+  };
 }

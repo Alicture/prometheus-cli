@@ -4,13 +4,16 @@ import type { Sandbox } from '../sandbox/index.js';
 import { createSandbox } from '../sandbox/index.js';
 import type { LLMClient } from '../llm/index.js';
 import { createLLMClient } from '../llm/index.js';
-import { allTools, getToolByName } from '../tools/index.js';
+import { allTools } from '../tools/index.js';
+import { makeSkillTool } from '../tools/skill.js';
+import { SkillManager, type Skill } from '../skills/index.js';
 import type {
   AgentEvent,
   ContentBlock,
   ConversationMessage,
   EventSink,
   ToolContext,
+  ToolDefinition,
 } from '../types.js';
 import { buildSystemPrompt } from './prompt.js';
 import { estimateCostUSD } from './pricing.js';
@@ -27,17 +30,32 @@ export class AgentSession {
   private totalOutputTokens = 0;
   private abortController: AbortController | null = null;
   private started = false;
+  private skills: SkillManager;
+  private loadedSkills: Skill[] = [];
+  private tools: ToolDefinition[] = [];
+  private toolMap = new Map<string, ToolDefinition>();
 
-  constructor(config: Config) {
+  constructor(config: Config, skills: SkillManager = new SkillManager()) {
     this.config = config;
     this.sandbox = createSandbox(config);
     this.llm = createLLMClient(config);
+    this.skills = skills;
     this.toolCtx = {
       exec: (cmd, opts) => this.sandbox.exec(cmd, opts),
       readFile: (p) => this.sandbox.readFile(p),
       writeFile: (p, c) => this.sandbox.writeFile(p, c),
       workdir: this.sandbox['workdir'] as string,
     };
+    this.rebuildTools();
+  }
+
+  // Compose the active tool list: base tools plus a Skill tool when any skills
+  // are installed. Call after skills change.
+  private rebuildTools(): void {
+    this.loadedSkills = this.skills.list();
+    this.tools = [...allTools];
+    if (this.loadedSkills.length > 0) this.tools.push(makeSkillTool(this.skills));
+    this.toolMap = new Map(this.tools.map((t) => [t.name, t]));
   }
 
   describeEnvironment(): string {
@@ -64,6 +82,16 @@ export class AgentSession {
     await this.sandbox.stop();
   }
 
+  // Re-scan installed skills (e.g. after an install during the session).
+  reloadSkills(): Skill[] {
+    this.rebuildTools();
+    return this.loadedSkills;
+  }
+
+  get skillList(): Skill[] {
+    return this.loadedSkills;
+  }
+
   private emitCost(sink: EventSink): void {
     const totalCostUSD = estimateCostUSD(
       this.config.selectedTier,
@@ -82,7 +110,7 @@ export class AgentSession {
     this.messages.push({ role: 'user', content: [{ type: 'text', text: userText }] });
 
     const model = modelForTier(this.config);
-    const system = buildSystemPrompt(this.workdir);
+    const system = buildSystemPrompt(this.workdir, this.loadedSkills);
     this.abortController = new AbortController();
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
@@ -92,7 +120,7 @@ export class AgentSession {
           model,
           system,
           messages: this.messages,
-          tools: allTools,
+          tools: this.tools,
           maxTokens: this.config.maxTokens,
           onTextDelta: (delta) => sink({ type: 'streaming', delta }),
           onThinkingDelta: (delta) => sink({ type: 'thinking', delta }),
@@ -126,7 +154,7 @@ export class AgentSession {
       for (const call of result.toolCalls) {
         sink({ type: 'tool_use_start', id: call.id, name: call.name, input: call.input });
         const startedAt = Date.now();
-        const tool = getToolByName(call.name);
+        const tool = this.toolMap.get(call.name);
         let content: string;
         let isError = false;
         if (!tool) {

@@ -15,6 +15,7 @@ import {
   ALL_TIERS,
 } from './config/index.js';
 import { setConfigKey, flattenConfig } from './config/cli.js';
+import { SkillManager } from './skills/index.js';
 import { App } from './ui/App.js';
 
 const cli = meow(
@@ -29,6 +30,9 @@ const cli = meow(
     $ prometheus models                list model tiers and their IDs
     $ prometheus models use <tier>     set the active tier
     $ prometheus models set <t> <id>   set the model ID for a tier
+    $ prometheus skill list            list installed skills
+    $ prometheus skill install <repo>  install a skill from GitHub (owner/repo[/subdir][#ref])
+    $ prometheus skill remove <name>   remove an installed skill
 
   Config keys (examples)
     apiKey                 your Claude-compatible API key
@@ -53,6 +57,45 @@ const cli = meow(
 
 async function main() {
   const [command, ...rest] = cli.input;
+
+  if (command === 'skill' || command === 'skills') {
+    const skills = new SkillManager();
+    const sub = rest[0];
+    if (sub === 'install' || sub === 'add') {
+      const spec = rest.slice(1).join(' ').trim();
+      if (!spec) {
+        console.error('Usage: prometheus skill install <owner/repo[/subdir][#ref]>');
+        process.exit(1);
+      }
+      try {
+        console.log(`Installing skill from ${spec}…`);
+        const names = await skills.installFromGitHub(spec);
+        console.log(`Installed: ${names.join(', ')}`);
+      } catch (err) {
+        console.error(`Install failed: ${(err as Error).message}`);
+        process.exit(1);
+      }
+      return;
+    }
+    if (sub === 'remove' || sub === 'rm') {
+      const name = rest.slice(1).join(' ').trim();
+      const ok = skills.remove(name);
+      console.log(ok ? `Removed: ${name}` : `Skill not found: ${name}`);
+      if (!ok) process.exit(1);
+      return;
+    }
+    // Default: list.
+    const list = skills.list();
+    if (list.length === 0) {
+      console.log('No skills installed. Add one with: prometheus skill install <owner/repo>');
+      return;
+    }
+    console.log('Installed skills:\n');
+    for (const s of list) {
+      console.log(`  ${s.name}\n    ${s.description || '(no description)'}`);
+    }
+    return;
+  }
 
   if (command === 'models') {
     const sub = rest[0];

@@ -35,6 +35,10 @@ environment: Docker: claude-sandbox
   default), fully configurable and switchable at runtime with `/model`.
 - **Six tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob — mirrored
   from the original sandbox toolset.
+- **Skills** — install agent skills from GitHub (`prometheus skill install owner/repo`);
+  installed skills are surfaced to the model and loaded on demand via a `Skill` tool.
+- **Slash-command autocomplete** — type `/` for a live suggestion menu (↑↓ to
+  select, Tab to complete).
 - **Live TUI** — streaming responses, tool activity log, token + cost status bar.
 - **Custom proxy / base URL** — point at your own gateway.
 
@@ -113,11 +117,16 @@ prometheus config set ssh.workspace '~/project'
 | `/model` | open the interactive model picker |
 | `/model <tier>` | switch model tier (hermes / athena / zeus) |
 | `/model set <tier> <id>` | set the model ID for a tier |
+| `/skills` | list installed skills |
+| `/skill install <repo>` | install a skill from GitHub |
+| `/skill remove <name>` | remove an installed skill |
 | `/env` | show current environment + API base URL |
 | `/clear` | clear the conversation |
 | `/quit` | exit |
 | `Esc` | abort the current turn |
 | `Ctrl+C` | exit |
+
+Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `Tab` to complete.
 
 ### Model picker
 
@@ -136,16 +145,40 @@ prometheus models use athena                   # set the active tier
 prometheus models set zeus claude-opus-4-1     # change a tier's model ID
 ```
 
+## Skills
+
+Prometheus supports installable **agent skills** — a directory containing a
+`SKILL.md` with `name` and `description` frontmatter plus instructions. Install
+skills directly from GitHub:
+
+```bash
+prometheus skill install owner/repo                 # SKILL.md at repo root
+prometheus skill install owner/repo/skills/pdf      # SKILL.md in a subdirectory
+prometheus skill install owner/repo#v2              # a specific branch/tag
+prometheus skill install https://github.com/owner/repo/tree/main/skills/pdf
+prometheus skill list
+prometheus skill remove pdf
+```
+
+You can also manage skills inside the TUI with `/skill install <repo>`,
+`/skill remove <name>`, and `/skills`.
+
+Installed skills live in `~/.prometheus/skills/`. Their `name` + `description`
+are injected into the system prompt, and the agent loads a skill's full
+instructions on demand by calling the built-in `Skill` tool — so skills extend
+what Prometheus can do without bloating every prompt.
+
 ## Architecture
 
 ```
 src/
-  cli.tsx            entry point + `config` subcommand
+  cli.tsx            entry point + config / models / skill subcommands
   config/            zod-validated config (~/.prometheus/config.json)
   llm/               Claude-compatible + OpenAI-compatible streaming clients
   agent/             agentic loop, system prompt, cost estimate
-  tools/             Bash / FileRead / FileWrite / FileEdit / Grep / Glob
+  tools/             Bash / FileRead / FileWrite / FileEdit / Grep / Glob / Skill
   sandbox/           docker | ssh | local executors (Sandbox interface)
+  skills/            SkillManager: install (GitHub) / list / remove
   ui/                Ink components, App, useAgent hook
 ```
 

@@ -16,16 +16,32 @@ import { Header } from './components/Header.js';
 import { MessageItem } from './components/MessageItem.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ModelPicker, type TierRow } from './components/ModelPicker.js';
+import { SlashSuggest, type SlashCommand } from './components/SlashSuggest.js';
+
+// Catalog of slash commands used for autocomplete.
+const COMMANDS: SlashCommand[] = [
+  { name: 'help', desc: 'show help' },
+  { name: 'model', args: '[tier]', desc: 'switch tier / open model picker' },
+  { name: 'skills', desc: 'list installed skills' },
+  { name: 'skill', args: 'install <repo>', desc: 'install a skill from GitHub' },
+  { name: 'env', desc: 'show environment + API base URL' },
+  { name: 'clear', desc: 'clear the conversation' },
+  { name: 'quit', desc: 'exit Prometheus' },
+];
 
 const HELP = [
-  '/help                 show this help',
-  '/model                open the interactive model picker',
-  '/model <tier>         switch tier: hermes | athena | zeus',
-  '/model set <t> <id>   set the model ID for a tier',
-  '/env                  show the current execution environment',
-  '/clear                clear the conversation',
-  '/quit                 exit Prometheus',
+  '/help                  show this help',
+  '/model                 open the interactive model picker',
+  '/model <tier>          switch tier: hermes | athena | zeus',
+  '/model set <t> <id>    set the model ID for a tier',
+  '/skills                list installed skills',
+  '/skill install <repo>  install a skill from GitHub (owner/repo[/subdir][#ref])',
+  '/skill remove <name>   remove an installed skill',
+  '/env                   show the current execution environment',
+  '/clear                 clear the conversation',
+  '/quit                  exit Prometheus',
   '',
+  'Type "/" for command autocomplete (↑↓ select, Tab complete).',
   'Esc aborts the current turn. Ctrl+C exits.',
 ].join('\n');
 
@@ -41,6 +57,7 @@ export function App({ config }: { config: Config }) {
     zeus: config.modelZeus,
   });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(0);
 
   useEffect(() => {
     void agent.begin();
@@ -49,10 +66,77 @@ export function App({ config }: { config: Config }) {
 
   const model = models[tier];
 
+  // Slash autocomplete: active while typing a command token (no space yet).
+  const slashQuery =
+    input.startsWith('/') && !input.includes(' ') ? input.slice(1).toLowerCase() : null;
+  const suggestions =
+    slashQuery !== null && !pickerOpen
+      ? COMMANDS.filter((c) => c.name.startsWith(slashQuery))
+      : [];
+  // Hide the menu once the exact command is fully typed (e.g. "/help").
+  const showSuggest =
+    suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].name === slashQuery);
+
   useInput((_input, key) => {
     if (pickerOpen) return;
+    // Slash-command autocomplete navigation.
+    if (showSuggest) {
+      if (key.upArrow) {
+        setSuggestIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (key.downArrow) {
+        setSuggestIndex((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (key.tab) {
+        const pick = suggestions[Math.min(suggestIndex, suggestions.length - 1)];
+        const completion = pick.args ? `/${pick.name} ` : `/${pick.name} `;
+        setInput(completion);
+        setSuggestIndex(0);
+        return;
+      }
+    }
     if (key.escape && agent.status.busy) agent.abort();
   });
+
+  const onInputChange = (value: string) => {
+    setInput(value);
+    setSuggestIndex(0);
+  };
+
+  const handleSkillCommand = (rest: string[]) => {
+    const sub = rest[0];
+    if (sub === 'install' || sub === 'add') {
+      const spec = rest.slice(1).join(' ').trim();
+      if (!spec) {
+        agent.pushNotice('Usage: /skill install <owner/repo[/subdir][#ref]>', 'error');
+        return;
+      }
+      void agent.installSkill(spec);
+      return;
+    }
+    if (sub === 'remove' || sub === 'rm') {
+      const name = rest.slice(1).join(' ').trim();
+      if (!name) {
+        agent.pushNotice('Usage: /skill remove <name>', 'error');
+        return;
+      }
+      agent.removeSkill(name);
+      return;
+    }
+    agent.pushNotice('Usage: /skill install <repo> | /skill remove <name>', 'error');
+  };
+
+  const showSkills = () => {
+    const list = agent.listSkills();
+    if (list.length === 0) {
+      agent.pushNotice('No skills installed. Add one with: /skill install <owner/repo>');
+      return;
+    }
+    const lines = list.map((s) => `• ${s.name} — ${s.description || '(no description)'}`);
+    agent.pushNotice('Installed skills:\n' + lines.join('\n'));
+  };
 
   const switchTier = (next: Tier) => {
     setTier(next);
@@ -99,6 +183,12 @@ export function App({ config }: { config: Config }) {
         break;
       case 'model':
         handleModelCommand(rest);
+        break;
+      case 'skills':
+        showSkills();
+        break;
+      case 'skill':
+        handleSkillCommand(rest);
         break;
       case 'env':
         agent.pushNotice(
@@ -168,15 +258,20 @@ export function App({ config }: { config: Config }) {
             onClose={() => setPickerOpen(false)}
           />
         ) : (
-          <Box>
-            <Text color={theme.accent}>{agent.status.busy ? '… ' : '› '}</Text>
-            <TextInput
-              value={input}
-              onChange={setInput}
-              onSubmit={onSubmit}
-              placeholder={agent.ready ? 'Ask Prometheus, or /help' : 'starting sandbox…'}
-            />
-          </Box>
+          <>
+            {showSuggest ? (
+              <SlashSuggest suggestions={suggestions} selected={Math.min(suggestIndex, suggestions.length - 1)} />
+            ) : null}
+            <Box>
+              <Text color={theme.accent}>{agent.status.busy ? '… ' : '› '}</Text>
+              <TextInput
+                value={input}
+                onChange={onInputChange}
+                onSubmit={onSubmit}
+                placeholder={agent.ready ? 'Ask Prometheus, or /help' : 'starting sandbox…'}
+              />
+            </Box>
+          </>
         )}
       </Box>
     </Box>
