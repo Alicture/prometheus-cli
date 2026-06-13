@@ -1,64 +1,86 @@
-# Prometheus CLI
+<div align="center">
 
-**Agentic coding in your terminal — in a configurable Docker or remote sandbox.**
+# ✶ Prometheus CLI
 
-Prometheus CLI is a terminal reimplementation of the Prometheus SwiftUI desktop
-app, built with [React](https://react.dev) + [Ink](https://github.com/vadimdemedes/ink).
-It talks directly to a **Claude-compatible API** (the native Anthropic Messages
-API, or any OpenAI-compatible gateway) and runs all tool commands inside an
-execution environment you choose: a **Docker container**, a **remote host over
-SSH**, or your **local machine**.
+**Agentic coding in your terminal — powered by any Claude-compatible API, running in the sandbox you choose.**
 
-There is no backend server — everything runs from the CLI.
+[![Node](https://img.shields.io/badge/node-%3E%3D18-43853d?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Ink](https://img.shields.io/badge/built%20with-React%20%2B%20Ink-61dafb?logo=react&logoColor=white)](https://github.com/vadimdemedes/ink)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 
-```
+</div>
+
+---
+
+Prometheus CLI is a terminal client for **agentic coding**. It talks directly to a
+**Claude-compatible API** — the native [Anthropic Messages API](https://docs.anthropic.com/en/api/messages),
+or any OpenAI-compatible gateway — and executes every tool call inside an
+execution environment you control: your **local machine**, a **Docker container**,
+or a **remote Linux host over SSH**.
+
+No backend. No server. Everything runs from the CLI.
+
+```text
 ✶ PROMETHEUS
-agentic coding in your terminal · hermes (claude-haiku-4-20250414)
+agentic coding in your terminal · hermes (claude-haiku)
 environment: Local: ~/project
 
 › refactor the auth module and run the tests
 
 ● Bash  npm test (2.4s)
-  ...
+  ✓ 42 passing
 ```
+
+## Table of Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [In-App Commands](#in-app-commands)
+- [Model Tiers](#model-tiers)
+- [Permissions](#permissions)
+- [Skills](#skills)
+- [Architecture](#architecture)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Claude-compatible API** (required): native Anthropic Messages API by default,
-  with full streaming and tool-use. OpenAI-compatible `/v1/chat/completions` is
-  also supported (`apiFormat: openai`) for proxy gateways.
-- **Configurable environment** (the core feature):
-  - `local` — runs directly on your machine (default)
-  - `docker` — spins up / reuses a container via the `docker` CLI (set
-    `docker.host` for a custom daemon such as colima)
+- 🤖 **Claude-compatible API** — native Anthropic Messages API with full streaming
+  and tool-use, plus an OpenAI-compatible `/v1/chat/completions` fallback
+  (`apiFormat: openai`) for proxy gateways.
+- 🧰 **Configurable execution environment** — the core idea:
+  - `local` — runs directly on your machine *(default)*
+  - `docker` — spins up / reuses a container via the `docker` CLI (point at a custom
+    daemon such as colima with `docker.host`)
   - `ssh` — runs on any remote Linux host over SSH (SFTP for file I/O)
-- **Three model tiers** — Hermes / Athena / Zeus (haiku / sonnet / opus by
+- 🎚️ **Three model tiers** — Hermes / Athena / Zeus (haiku / sonnet / opus by
   default), fully configurable and switchable at runtime with `/model`.
-- **Six tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob — mirrored
-  from the original sandbox toolset.
-- **Permission system** — side-effecting tools (Bash / FileWrite / FileEdit)
-  prompt for approval before running; read-only tools (FileRead / Grep / Glob)
-  run freely. Approve once, approve for the session, or deny. Configurable mode
-  (`ask` / `auto` / `readonly`) via `/permissions` or `permissions.mode`.
-- **Skills** — install agent skills from GitHub (`prometheus skill install owner/repo`);
-  installed skills are surfaced to the model and loaded on demand via a `Skill` tool.
-- **Slash-command autocomplete** — type `/` for a live suggestion menu (↑↓ to
-  select, Tab to complete).
-- **Live TUI** — streaming responses, tool activity log, token + cost status bar.
-- **Custom proxy / base URL** — point at your own gateway.
+- 🔧 **Built-in tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob.
+- 🔐 **Permission system** — side-effecting tools prompt for approval; read-only
+  tools run freely. Approve once, approve for the session, or deny.
+- 🧩 **Skills** — install agent skills straight from GitHub and surface them to the
+  model on demand.
+- ⌨️ **Slash-command autocomplete** — type `/` for a live suggestion menu.
+- 📊 **Live TUI** — streaming responses, tool activity log, token + cost status bar.
 
 ## Install
 
 ```bash
+git clone https://github.com/Alicture/prometheus-cli.git
+cd prometheus-cli
 npm install
 npm run build
 npm link        # optional: exposes the `prometheus` command globally
 ```
 
-Requires Node 18+. For the Docker environment you need Docker installed; for SSH
-you need a reachable host.
+> **Requirements:** Node 18+. The Docker environment needs Docker installed; the
+> SSH environment needs a reachable host.
 
-## Quick start
+## Quick Start
 
 ```bash
 # 1. Configure your Claude-compatible API key
@@ -66,15 +88,12 @@ prometheus config set apiKey sk-ant-...        # or export ANTHROPIC_API_KEY
 
 # 2. Pick an environment (defaults to `local`)
 prometheus config set environment local         # local | docker | ssh
-# For Docker, optionally point at a custom daemon (e.g. colima):
-# prometheus config set environment docker
-# prometheus config set docker.host unix:///Users/me/.colima/default/docker.sock
 
 # 3. Run
 prometheus
 ```
 
-Or skip the build and run from source:
+Prefer to run from source without building?
 
 ```bash
 npm run dev
@@ -92,24 +111,25 @@ prometheus config set <key> <value>     # dotted keys supported
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `apiKey` | Claude-compatible API key | (env `ANTHROPIC_API_KEY`) |
+| `apiKey` | Claude-compatible API key | env `ANTHROPIC_API_KEY` |
 | `baseURL` | Proxy / gateway base URL | provider default |
 | `apiFormat` | `anthropic` or `openai` | `anthropic` |
 | `selectedTier` | `hermes` / `athena` / `zeus` | `hermes` |
-| `modelHermes` / `modelAthena` / `modelZeus` | model IDs per tier | claude haiku/sonnet/opus |
+| `modelHermes` / `modelAthena` / `modelZeus` | model IDs per tier | haiku / sonnet / opus |
 | `environment` | `local` / `docker` / `ssh` | `local` |
 | `docker.image` | sandbox image | `claude-sandbox` |
-| `docker.host` | Docker daemon endpoint (else `DOCKER_HOST`) | (default socket) |
-| `docker.containerId` | reuse an existing container | (none) |
+| `docker.host` | Docker daemon endpoint (else `DOCKER_HOST`) | default socket |
+| `docker.containerId` | reuse an existing container | — |
 | `docker.persistent` | keep container after exit | `false` |
-| `ssh.host` / `ssh.port` / `ssh.username` | remote target | |
-| `ssh.privateKeyPath` / `ssh.password` | auth | |
+| `ssh.host` / `ssh.port` / `ssh.username` | remote target | — |
+| `ssh.privateKeyPath` / `ssh.password` | auth | — |
 | `ssh.workspace` | remote working dir | `~/workspace` |
 | `local.workspace` | local working dir | cwd |
 | `permissions.mode` | `ask` / `auto` / `readonly` | `ask` |
 | `permissions.allow` | tool names allowed without prompting | `[]` |
 
-### Example: remote SSH environment
+<details>
+<summary><b>Example: remote SSH environment</b></summary>
 
 ```bash
 prometheus config set environment ssh
@@ -118,8 +138,20 @@ prometheus config set ssh.username ubuntu
 prometheus config set ssh.privateKeyPath ~/.ssh/id_ed25519
 prometheus config set ssh.workspace '~/project'
 ```
+</details>
 
-## In-app commands
+<details>
+<summary><b>Example: custom Docker daemon (colima)</b></summary>
+
+```bash
+prometheus config set environment docker
+prometheus config set docker.host unix:///Users/me/.colima/default/docker.sock
+```
+</details>
+
+## In-App Commands
+
+Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `Tab` to complete.
 
 | Command | Action |
 |---------|--------|
@@ -144,9 +176,15 @@ prometheus config set ssh.workspace '~/project'
 | `Esc` | abort the current turn |
 | `Ctrl+C` | exit |
 
-Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `Tab` to complete.
+## Model Tiers
 
-### Model picker
+Prometheus maps three named tiers to model IDs you can change at will:
+
+| Tier | Default model | Use for |
+|------|---------------|---------|
+| **Hermes** | Claude Haiku | fast, cheap iteration *(default)* |
+| **Athena** | Claude Sonnet | balanced everyday work |
+| **Zeus** | Claude Opus | the hardest reasoning |
 
 `/model` (no argument) opens an interactive picker:
 
@@ -155,7 +193,7 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 - `e` — edit the highlighted tier's model ID inline
 - `esc` — close
 
-The same configuration is available from the CLI without launching the TUI:
+Or configure from the CLI without launching the TUI:
 
 ```bash
 prometheus models                              # list tiers + model IDs
@@ -163,11 +201,28 @@ prometheus models use athena                   # set the active tier
 prometheus models set zeus claude-opus-4-1     # change a tier's model ID
 ```
 
+## Permissions
+
+Because tools can run on your real machine, Prometheus gates side-effecting tools
+behind an approval prompt:
+
+- **Read-only tools** (`FileRead`, `Grep`, `Glob`) run without asking.
+- **Side-effecting tools** (`Bash`, `FileWrite`, `FileEdit`, `Skill`) prompt before
+  running: <kbd>a</kbd>/<kbd>↵</kbd> allow once · <kbd>s</kbd> allow for the session
+  · <kbd>d</kbd>/<kbd>esc</kbd> deny.
+
+Set the mode with `/permissions <mode>` or `permissions.mode`:
+
+| Mode | Behavior |
+|------|----------|
+| `ask` | prompt before every side effect *(default)* |
+| `auto` | run everything without prompting |
+| `readonly` | auto-deny all side-effecting tools |
+
 ## Skills
 
-Prometheus supports installable **agent skills** — a directory containing a
-`SKILL.md` with `name` and `description` frontmatter plus instructions. Install
-skills directly from GitHub:
+Install **agent skills** — a directory containing a `SKILL.md` with `name` and
+`description` frontmatter plus instructions — straight from GitHub:
 
 ```bash
 prometheus skill install owner/repo                 # SKILL.md at repo root
@@ -178,17 +233,15 @@ prometheus skill list
 prometheus skill remove pdf
 ```
 
-You can also manage skills inside the TUI with `/skill install <repo>`,
-`/skill remove <name>`, and `/skills`.
-
-Installed skills live in `~/.prometheus/skills/`. Their `name` + `description`
-are injected into the system prompt, and the agent loads a skill's full
-instructions on demand by calling the built-in `Skill` tool — so skills extend
-what Prometheus can do without bloating every prompt.
+Installed skills live in `~/.prometheus/skills/`. Their `name` + `description` are
+injected into the system prompt, and the agent loads a skill's full instructions on
+demand via the built-in `Skill` tool — so skills extend what Prometheus can do
+without bloating every prompt. Manage them in the TUI too with `/skill install`,
+`/skill remove`, and `/skills`.
 
 ## Architecture
 
-```
+```text
 src/
   cli.tsx            entry point + config / models / skill subcommands
   config/            zod-validated config (~/.prometheus/config.json)
@@ -203,3 +256,19 @@ src/
 The agent loop streams a model turn, dispatches any `tool_use` calls into the
 selected sandbox, feeds `tool_result` blocks back, and repeats until the model
 stops or `maxTurns` is reached.
+
+## Contributing
+
+Contributions are welcome! To get started:
+
+```bash
+npm install
+npm run typecheck   # tsc --noEmit
+npm run build       # tsc → dist/
+```
+
+Please keep changes focused and follow [Conventional Commits](https://www.conventionalcommits.org).
+
+## License
+
+[MIT](LICENSE) © Alicture
