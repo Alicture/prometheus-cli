@@ -124,7 +124,12 @@ prometheus config set ssh.workspace '~/project'
 | `/skills` | list installed skills |
 | `/skill install <repo>` | install a skill from GitHub |
 | `/skill remove <name>` | remove an installed skill |
-| `/env` | show current environment + API base URL |
+| `/env` | show the current environment + API base URL |
+| `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
+| `/docker` | show Docker settings |
+| `/docker on` / `/docker off` | switch to the Docker / local sandbox |
+| `/docker host <url>` | set the Docker daemon endpoint (`DOCKER_HOST`) and restart |
+| `/docker image <name>` | set the sandbox image |
 | `/clear` | clear the conversation |
 | `/quit` | exit |
 | `Esc` | abort the current turn |

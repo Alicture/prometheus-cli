@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
 import { SkillManager, type Skill } from '../../skills/index.js';
@@ -20,6 +20,7 @@ export interface UseAgent {
   abort: () => void;
   pushNotice: (text: string, level?: 'info' | 'error') => void;
   clear: () => void;
+  restart: () => Promise<void>;
   listSkills: () => Skill[];
   installSkill: (spec: string) => Promise<void>;
   removeSkill: (name: string) => void;
@@ -38,6 +39,7 @@ export function useAgent(config: Config): UseAgent {
   const [live, setLive] = useState<UIItem[]>([]);
   const [ready, setReady] = useState(false);
   const [startup, setStartup] = useState<string | null>(null);
+  const [envLabel, setEnvLabel] = useState<string>(() => session.describeEnvironment());
   const [status, setStatus] = useState<UIStatus>({
     sandbox: 'idle',
     sandboxDetail: '',
@@ -155,6 +157,24 @@ export function useAgent(config: Config): UseAgent {
     }
   }, [session, handleEvent]);
 
+  // Tear down and recreate the sandbox from the current config (e.g. after the
+  // user switches environment with /env or /docker at runtime).
+  const restart = useCallback(async () => {
+    setReady(false);
+    setStartup(null);
+    try {
+      await session.restartSandbox(handleEvent);
+      setEnvLabel(session.describeEnvironment());
+      setReady(true);
+      pushNotice(`Environment ready → ${session.describeEnvironment()}`);
+    } catch (err) {
+      setEnvLabel(session.describeEnvironment());
+      setStartup((err as Error).message);
+      setStatus((s) => ({ ...s, sandbox: 'error' }));
+      pushNotice(`Failed to start sandbox: ${(err as Error).message}`, 'error');
+    }
+  }, [session, handleEvent, pushNotice]);
+
   const send = useCallback(
     (text: string) => {
       setHistory((h) => [...h, { id: nextId(), kind: 'user', text }]);
@@ -171,8 +191,6 @@ export function useAgent(config: Config): UseAgent {
     pushNotice('Aborted.', 'error');
     flushLive();
   }, [session, pushNotice, flushLive]);
-
-  const envLabel = useMemo(() => session.describeEnvironment(), [session]);
 
   const listSkills = useCallback(() => session.skillList, [session]);
 
@@ -211,6 +229,7 @@ export function useAgent(config: Config): UseAgent {
     abort,
     pushNotice,
     clear,
+    restart,
     listSkills,
     installSkill,
     removeSkill,

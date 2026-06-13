@@ -74,6 +74,20 @@ export class AgentSession {
     this.started = true;
   }
 
+  // Rebuild the sandbox from the (possibly mutated) config and start it again.
+  // Used when the user changes the execution environment at runtime, e.g. via
+  // the `/env` or `/docker` slash commands.
+  async restartSandbox(sink: EventSink): Promise<void> {
+    try {
+      await this.sandbox.stop();
+    } catch {
+      // best-effort teardown
+    }
+    this.sandbox = createSandbox(this.config);
+    this.started = false;
+    await this.start(sink);
+  }
+
   abort(): void {
     this.abortController?.abort();
   }
