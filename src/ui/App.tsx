@@ -28,7 +28,6 @@ const COMMANDS: SlashCommand[] = [
   { name: 'skills', desc: 'list installed skills' },
   { name: 'skill', args: 'install <repo>', desc: 'install a skill from GitHub' },
   { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
-  { name: 'docker', args: '[on|off|host <url>]', desc: 'configure / switch to the Docker sandbox' },
   { name: 'clear', desc: 'clear the conversation' },
   { name: 'quit', desc: 'exit Prometheus' },
 ];
@@ -49,11 +48,6 @@ const HELP = [
   '/skill remove <name>   remove an installed skill',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
-  '/docker                show Docker settings',
-  '/docker on             switch to the Docker sandbox',
-  '/docker off            switch to local execution',
-  '/docker host <url>     set the Docker daemon endpoint (DOCKER_HOST) + restart',
-  '/docker image <name>   set the sandbox image',
   '/clear                 clear the conversation',
   '/quit                  exit Prometheus',
   '',
@@ -297,64 +291,6 @@ export function App({ config }: { config: Config }) {
     void agent.restart();
   };
 
-  const handleDockerCommand = (rest: string[]) => {
-    const sub = rest[0];
-    if (!sub) {
-      agent.pushNotice(
-        `Docker settings:\n` +
-          `• image: ${config.docker.image}\n` +
-          `• host: ${config.docker.host || '(default socket / DOCKER_HOST)'}\n` +
-          `• containerId: ${config.docker.containerId || '(none)'}\n` +
-          `• persistent: ${config.docker.persistent}\n` +
-          `Active environment: ${config.environment}\n` +
-          `Use: /docker on | off | host <url> | image <name>`,
-      );
-      return;
-    }
-    switch (sub) {
-      case 'on':
-      case 'use':
-        config.environment = 'docker';
-        saveConfig(config);
-        agent.pushNotice('Environment → docker. Restarting sandbox…');
-        void agent.restart();
-        break;
-      case 'off':
-      case 'local':
-        config.environment = 'local';
-        saveConfig(config);
-        agent.pushNotice('Environment → local. Restarting sandbox…');
-        void agent.restart();
-        break;
-      case 'host': {
-        const url = rest.slice(1).join(' ').trim();
-        if (!url) {
-          agent.pushNotice('Usage: /docker host <DOCKER_HOST url, e.g. unix:///path/docker.sock>', 'error');
-          return;
-        }
-        config.docker.host = url;
-        config.environment = 'docker';
-        saveConfig(config);
-        agent.pushNotice(`docker.host → ${url}. Switching to docker and restarting…`);
-        void agent.restart();
-        break;
-      }
-      case 'image': {
-        const name = rest.slice(1).join(' ').trim();
-        if (!name) {
-          agent.pushNotice('Usage: /docker image <image-name>', 'error');
-          return;
-        }
-        config.docker.image = name;
-        saveConfig(config);
-        agent.pushNotice(`docker.image → ${name}`);
-        break;
-      }
-      default:
-        agent.pushNotice('Usage: /docker [on|off|host <url>|image <name>]', 'error');
-    }
-  };
-
   const runCommand = (raw: string) => {
     const [cmd, ...rest] = raw.slice(1).trim().split(/\s+/);
     switch (cmd) {
@@ -375,9 +311,6 @@ export function App({ config }: { config: Config }) {
         break;
       case 'env':
         handleEnvCommand(rest);
-        break;
-      case 'docker':
-        handleDockerCommand(rest);
         break;
       case 'clear':
         agent.clear();
