@@ -16,8 +16,10 @@ type AnyContentParam = TextBlockParam | ToolUseBlockParam | ToolResultBlockParam
 // proxy or gateway.
 export class AnthropicClient implements LLMClient {
   private client: Anthropic;
+  private hasKey: boolean;
 
   constructor(opts: { apiKey: string; baseURL?: string; anthropicVersion?: string }) {
+    this.hasKey = !!(opts.apiKey && opts.apiKey.trim());
     this.client = new Anthropic({
       apiKey: opts.apiKey,
       baseURL: opts.baseURL && opts.baseURL.trim() ? opts.baseURL.trim() : undefined,
@@ -64,7 +66,14 @@ export class AnthropicClient implements LLMClient {
         messages: this.toAnthropicMessages(params.messages),
         tools,
       },
-      { signal: params.signal },
+      {
+        signal: params.signal,
+        // Without an API key, explicitly omit the auth header so requests can
+        // reach a no-auth proxy (and so the SDK doesn't throw its cryptic
+        // "Could not resolve authentication method" error). When a key IS set,
+        // the SDK sends x-api-key as usual.
+        headers: this.hasKey ? undefined : { 'x-api-key': null },
+      },
     );
 
     stream.on('text', (delta) => params.onTextDelta(delta));

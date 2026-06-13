@@ -70,6 +70,14 @@ export function App({ config }: { config: Config }) {
 
   useEffect(() => {
     void agent.begin();
+    if (!config.apiKey) {
+      agent.pushNotice(
+        'No API key configured. Set one with `/help` → or run ' +
+          '`prometheus config set apiKey <key>` (or export ANTHROPIC_API_KEY / ' +
+          'ANTHROPIC_AUTH_TOKEN). For a no-auth proxy, set a baseURL and leave the key empty.',
+        'error',
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
