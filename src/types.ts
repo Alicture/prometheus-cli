@@ -68,5 +68,22 @@ export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  // Read-only tools never mutate state and are exempt from approval prompts.
+  readOnly?: boolean;
   run(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }
+
+// ---- Permission / approval system ----
+// Before running a side-effecting tool, the agent asks for approval. The UI
+// resolves the returned promise with the user's decision.
+export interface ApprovalRequest {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  summary: string;
+  readOnly: boolean;
+}
+
+export type ApprovalDecision = 'allow' | 'always' | 'deny';
+
+export type Approver = (req: ApprovalRequest) => Promise<ApprovalDecision>;

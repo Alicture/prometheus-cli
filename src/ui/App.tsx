@@ -7,6 +7,7 @@ import {
   saveConfig,
   setModelForTier,
   EnvironmentSchema,
+  PermissionModeSchema,
   TierSchema,
   TIER_LABELS,
   ALL_TIERS,
@@ -19,6 +20,7 @@ import { MessageItem } from './components/MessageItem.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ModelPicker, type TierRow } from './components/ModelPicker.js';
 import { SlashSuggest, type SlashCommand } from './components/SlashSuggest.js';
+import { ApprovalPrompt } from './components/ApprovalPrompt.js';
 
 // Catalog of slash commands used for autocomplete.
 const COMMANDS: SlashCommand[] = [
@@ -28,6 +30,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'skills', desc: 'list installed skills' },
   { name: 'skill', args: 'install <repo>', desc: 'install a skill from GitHub' },
   { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
+  { name: 'permissions', args: '[ask|auto|readonly]', desc: 'view or set the tool permission mode' },
   { name: 'clear', desc: 'clear the conversation' },
   { name: 'quit', desc: 'exit Prometheus' },
 ];
@@ -48,6 +51,8 @@ const HELP = [
   '/skill remove <name>   remove an installed skill',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
+  '/permissions           show the tool permission mode',
+  '/permissions <mode>    set mode: ask | auto | readonly',
   '/clear                 clear the conversation',
   '/quit                  exit Prometheus',
   '',
@@ -96,7 +101,7 @@ export function App({ config }: { config: Config }) {
     suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].name === slashQuery);
 
   useInput((_input, key) => {
-    if (pickerOpen) return;
+    if (pickerOpen || agent.pendingApproval) return;
     // Slash-command autocomplete navigation.
     if (showSuggest) {
       if (key.upArrow) {
@@ -291,6 +296,30 @@ export function App({ config }: { config: Config }) {
     void agent.restart();
   };
 
+  const handlePermissionsCommand = (rest: string[]) => {
+    if (rest.length === 0) {
+      agent.pushNotice(
+        `Permission mode: ${config.permissions.mode}\n` +
+          (config.permissions.allow.length
+            ? `Always-allowed tools: ${config.permissions.allow.join(', ')}\n`
+            : '') +
+          `Set with: /permissions <ask|auto|readonly>\n` +
+          `  ask      — prompt before each side-effecting tool (default)\n` +
+          `  auto     — run every tool without prompting\n` +
+          `  readonly — only read-only tools run; others are denied`,
+      );
+      return;
+    }
+    const parsed = PermissionModeSchema.safeParse(rest[0]);
+    if (!parsed.success) {
+      agent.pushNotice('Usage: /permissions <ask|auto|readonly>', 'error');
+      return;
+    }
+    config.permissions.mode = parsed.data;
+    saveConfig(config);
+    agent.pushNotice(`Permission mode → ${parsed.data}`);
+  };
+
   const runCommand = (raw: string) => {
     const [cmd, ...rest] = raw.slice(1).trim().split(/\s+/);
     switch (cmd) {
@@ -311,6 +340,10 @@ export function App({ config }: { config: Config }) {
         break;
       case 'env':
         handleEnvCommand(rest);
+        break;
+      case 'permissions':
+      case 'perms':
+        handlePermissionsCommand(rest);
         break;
       case 'clear':
         agent.clear();
@@ -365,7 +398,9 @@ export function App({ config }: { config: Config }) {
 
         <StatusBar status={agent.status} tier={tier} model={model} />
 
-        {pickerOpen ? (
+        {agent.pendingApproval ? (
+          <ApprovalPrompt request={agent.pendingApproval} onDecision={agent.resolveApproval} />
+        ) : pickerOpen ? (
           <ModelPicker
             rows={ALL_TIERS.map<TierRow>((t) => ({ tier: t, label: TIER_LABELS[t], modelId: models[t] }))}
             current={tier}

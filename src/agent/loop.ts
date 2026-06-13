@@ -9,6 +9,8 @@ import { makeSkillTool } from '../tools/skill.js';
 import { SkillManager, type Skill } from '../skills/index.js';
 import type {
   AgentEvent,
+  ApprovalDecision,
+  Approver,
   ContentBlock,
   ConversationMessage,
   EventSink,
@@ -17,6 +19,17 @@ import type {
 } from '../types.js';
 import { buildSystemPrompt } from './prompt.js';
 import { estimateCostUSD } from './pricing.js';
+
+// One-line, human-readable summary of a tool call for approval prompts/logs.
+function summarizeTool(name: string, input: Record<string, unknown>): string {
+  if (name === 'Bash') return String(input.command ?? '');
+  if (name === 'FileWrite' || name === 'FileEdit' || name === 'FileRead') return String(input.path ?? '');
+  if (name === 'Grep') return `pattern ${String(input.pattern ?? '')}`;
+  if (name === 'Glob') return String(input.pattern ?? '');
+  if (name === 'Skill') return String(input.name ?? input.command ?? '');
+  const keys = Object.keys(input);
+  return keys.length ? `${keys[0]}=${String(input[keys[0]])}` : '';
+}
 
 // Drives the agentic loop: stream a model turn, dispatch any tool calls inside
 // the sandbox, feed results back, repeat until the model stops or maxTurns.
@@ -34,6 +47,9 @@ export class AgentSession {
   private loadedSkills: Skill[] = [];
   private tools: ToolDefinition[] = [];
   private toolMap = new Map<string, ToolDefinition>();
+  private approver?: Approver;
+  // Tool names approved for the rest of this session ("always allow").
+  private sessionAllow = new Set<string>();
 
   constructor(config: Config, skills: SkillManager = new SkillManager()) {
     this.config = config;
@@ -47,6 +63,33 @@ export class AgentSession {
       workdir: this.sandbox['workdir'] as string,
     };
     this.rebuildTools();
+  }
+
+  // Register the UI callback used to request tool-execution approval.
+  setApprover(approver: Approver): void {
+    this.approver = approver;
+  }
+
+  // Decide whether a tool call may run, prompting the user when needed.
+  // Returns 'allow' or 'deny' (after resolving any prompt / policy).
+  private async authorizeTool(tool: ToolDefinition | undefined, id: string, name: string, input: Record<string, unknown>): Promise<ApprovalDecision> {
+    // Read-only tools never need approval.
+    if (tool?.readOnly) return 'allow';
+    const mode = this.config.permissions.mode;
+    if (mode === 'auto') return 'allow';
+    if (mode === 'readonly') return 'deny';
+    // mode === 'ask'
+    if (this.config.permissions.allow.includes(name) || this.sessionAllow.has(name)) return 'allow';
+    if (!this.approver) return 'allow'; // no UI to ask (e.g. non-interactive) -> permissive
+    const decision = await this.approver({
+      id,
+      name,
+      input,
+      summary: summarizeTool(name, input),
+      readOnly: !!tool?.readOnly,
+    });
+    if (decision === 'always') this.sessionAllow.add(name);
+    return decision === 'deny' ? 'deny' : 'allow';
   }
 
   // Compose the active tool list: base tools plus a Skill tool when any skills
@@ -177,6 +220,16 @@ export class AgentSession {
         const tool = this.toolMap.get(call.name);
         let content: string;
         let isError = false;
+
+        const decision = await this.authorizeTool(tool, call.id, call.name, call.input);
+        if (decision === 'deny') {
+          content = `Permission denied by user: the ${call.name} tool was not run.`;
+          isError = true;
+          sink({ type: 'tool_result', id: call.id, content, isError, durationMs: Date.now() - startedAt });
+          resultBlocks.push({ type: 'tool_result', tool_use_id: call.id, content, is_error: true });
+          continue;
+        }
+
         if (!tool) {
           content = `Unknown tool: ${call.name}`;
           isError = true;

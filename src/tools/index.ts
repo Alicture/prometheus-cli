@@ -30,6 +30,7 @@ const Bash: ToolDefinition = {
 const FileRead: ToolDefinition = {
   name: 'FileRead',
   description: 'Read a file from the sandbox. Returns line-numbered content.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -99,6 +100,7 @@ const FileEdit: ToolDefinition = {
 const Grep: ToolDefinition = {
   name: 'Grep',
   description: 'Search file contents with ripgrep. Returns matching lines with file:line prefixes.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -125,6 +127,7 @@ const Grep: ToolDefinition = {
 const Glob: ToolDefinition = {
   name: 'Glob',
   description: 'List files matching a glob pattern using ripgrep.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {

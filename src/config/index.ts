@@ -63,6 +63,19 @@ export const LocalConfigSchema = z.object({
   workspace: z.string().default(process.cwd()),
 });
 
+// Permission / approval policy for tool execution.
+//  - 'ask'      : prompt before each side-effecting tool (default)
+//  - 'auto'     : run every tool without prompting (trusted / CI)
+//  - 'readonly' : auto-deny side-effecting tools; only read-only tools run
+export const PermissionModeSchema = z.enum(['ask', 'auto', 'readonly']);
+export type PermissionMode = z.infer<typeof PermissionModeSchema>;
+
+export const PermissionsSchema = z.object({
+  mode: PermissionModeSchema.default('ask'),
+  // Tool names that are always allowed without prompting (e.g. ['Bash']).
+  allow: z.array(z.string()).default([]),
+});
+
 export const ConfigSchema = z.object({
   // ---- LLM / Claude-compatible API ----
   apiKey: z.string().default(''),
@@ -92,6 +105,9 @@ export const ConfigSchema = z.object({
   docker: DockerConfigSchema.default({}),
   ssh: SSHConfigSchema.default({}),
   local: LocalConfigSchema.default({}),
+
+  // ---- Tool permissions ----
+  permissions: PermissionsSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

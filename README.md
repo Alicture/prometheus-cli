@@ -36,6 +36,10 @@ environment: Local: ~/project
   default), fully configurable and switchable at runtime with `/model`.
 - **Six tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob — mirrored
   from the original sandbox toolset.
+- **Permission system** — side-effecting tools (Bash / FileWrite / FileEdit)
+  prompt for approval before running; read-only tools (FileRead / Grep / Glob)
+  run freely. Approve once, approve for the session, or deny. Configurable mode
+  (`ask` / `auto` / `readonly`) via `/permissions` or `permissions.mode`.
 - **Skills** — install agent skills from GitHub (`prometheus skill install owner/repo`);
   installed skills are surfaced to the model and loaded on demand via a `Skill` tool.
 - **Slash-command autocomplete** — type `/` for a live suggestion menu (↑↓ to
@@ -102,6 +106,8 @@ prometheus config set <key> <value>     # dotted keys supported
 | `ssh.privateKeyPath` / `ssh.password` | auth | |
 | `ssh.workspace` | remote working dir | `~/workspace` |
 | `local.workspace` | local working dir | cwd |
+| `permissions.mode` | `ask` / `auto` / `readonly` | `ask` |
+| `permissions.allow` | tool names allowed without prompting | `[]` |
 
 ### Example: remote SSH environment
 
@@ -132,6 +138,7 @@ prometheus config set ssh.workspace '~/project'
 | `/skill remove <name>` | remove an installed skill |
 | `/env` | show the current environment + API base URL |
 | `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
+| `/permissions [ask\|auto\|readonly]` | view or set the tool permission mode |
 | `/clear` | clear the conversation |
 | `/quit` | exit |
 | `Esc` | abort the current turn |

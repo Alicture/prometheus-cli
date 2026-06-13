@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
 import { SkillManager, type Skill } from '../../skills/index.js';
-import type { AgentEvent } from '../../types.js';
+import type { AgentEvent, ApprovalDecision, ApprovalRequest } from '../../types.js';
 import type { UIItem, UIStatus } from '../types.js';
 
 let counter = 0;
@@ -22,6 +22,8 @@ export interface UseAgent {
   clear: () => void;
   restart: () => Promise<void>;
   refreshProvider: () => void;
+  pendingApproval: ApprovalRequest | null;
+  resolveApproval: (decision: ApprovalDecision) => void;
   listSkills: () => Skill[];
   installSkill: (spec: string) => Promise<void>;
   removeSkill: (name: string) => void;
@@ -38,6 +40,13 @@ export function useAgent(config: Config): UseAgent {
 
   const [history, setHistory] = useState<UIItem[]>([]);
   const [live, setLive] = useState<UIItem[]>([]);
+  // Mirror of `live` for synchronous reads inside event handlers, so updates
+  // are computed deterministically (no impure logic inside state updaters).
+  const liveRef = useRef<UIItem[]>([]);
+  const setLiveSafe = useCallback((next: UIItem[]) => {
+    liveRef.current = next;
+    setLive(next);
+  }, []);
   const [ready, setReady] = useState(false);
   const [startup, setStartup] = useState<string | null>(null);
   const [envLabel, setEnvLabel] = useState<string>(() => session.describeEnvironment());
@@ -53,11 +62,31 @@ export function useAgent(config: Config): UseAgent {
   // Tracks the id of the assistant item currently receiving streamed text.
   const activeAssistantId = useRef<string | null>(null);
 
+  // Pending tool-approval request + the resolver that the prompt UI calls.
+  const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
+  const approvalResolver = useRef<((d: ApprovalDecision) => void) | null>(null);
+
+  const approve = useCallback(
+    (req: ApprovalRequest) =>
+      new Promise<ApprovalDecision>((resolve) => {
+        approvalResolver.current = resolve;
+        setPendingApproval(req);
+      }),
+    [],
+  );
+
+  const resolveApproval = useCallback((decision: ApprovalDecision) => {
+    const resolver = approvalResolver.current;
+    approvalResolver.current = null;
+    setPendingApproval(null);
+    resolver?.(decision);
+  }, []);
+
   const flushLive = useCallback(() => {
-    setLive((curLive) => {
-      if (curLive.length) setHistory((h) => [...h, ...curLive]);
-      return [];
-    });
+    const curLive = liveRef.current;
+    if (curLive.length) setHistory((h) => [...h, ...curLive]);
+    liveRef.current = [];
+    setLive([]);
     activeAssistantId.current = null;
   }, []);
 
@@ -67,6 +96,7 @@ export function useAgent(config: Config): UseAgent {
 
   const clear = useCallback(() => {
     setHistory([]);
+    liveRef.current = [];
     setLive([]);
     activeAssistantId.current = null;
   }, []);
@@ -75,22 +105,25 @@ export function useAgent(config: Config): UseAgent {
     (ev: AgentEvent) => {
       switch (ev.type) {
         case 'streaming': {
-          setLive((cur) => {
-            const last = cur[cur.length - 1];
-            if (last && last.kind === 'assistant' && last.id === activeAssistantId.current) {
-              const updated = { ...last, text: last.text + ev.delta };
-              return [...cur.slice(0, -1), updated];
-            }
+          const cur = liveRef.current;
+          if (activeAssistantId.current === null) {
             const id = nextId();
             activeAssistantId.current = id;
-            return [...cur, { id, kind: 'assistant', text: ev.delta }];
-          });
+            setLiveSafe([...cur, { id, kind: 'assistant', text: ev.delta }]);
+          } else {
+            const id = activeAssistantId.current;
+            setLiveSafe(
+              cur.map((it) =>
+                it.id === id && it.kind === 'assistant' ? { ...it, text: it.text + ev.delta } : it,
+              ),
+            );
+          }
           break;
         }
         case 'tool_use_start': {
           activeAssistantId.current = null;
-          setLive((cur) => [
-            ...cur,
+          setLiveSafe([
+            ...liveRef.current,
             {
               id: nextId(),
               kind: 'tool',
@@ -105,8 +138,8 @@ export function useAgent(config: Config): UseAgent {
           break;
         }
         case 'tool_result': {
-          setLive((cur) =>
-            cur.map((it) =>
+          setLiveSafe(
+            liveRef.current.map((it) =>
               it.kind === 'tool' && it.toolId === ev.id
                 ? {
                     ...it,
@@ -138,17 +171,21 @@ export function useAgent(config: Config): UseAgent {
           break;
         }
         case 'error': {
-          setLive((cur) => [...cur, { id: nextId(), kind: 'notice', level: 'error', text: ev.message }]);
+          setLiveSafe([
+            ...liveRef.current,
+            { id: nextId(), kind: 'notice', level: 'error', text: ev.message },
+          ]);
           flushLive();
           setStatus((s) => ({ ...s, busy: false }));
           break;
         }
       }
     },
-    [flushLive],
+    [flushLive, setLiveSafe],
   );
 
   const begin = useCallback(async () => {
+    session.setApprover(approve);
     try {
       await session.start(handleEvent);
       setReady(true);
@@ -156,7 +193,7 @@ export function useAgent(config: Config): UseAgent {
       setStartup((err as Error).message);
       setStatus((s) => ({ ...s, sandbox: 'error' }));
     }
-  }, [session, handleEvent]);
+  }, [session, handleEvent, approve]);
 
   // Tear down and recreate the sandbox from the current config (e.g. after the
   // user switches environment with /env or /docker at runtime).
@@ -187,11 +224,13 @@ export function useAgent(config: Config): UseAgent {
   );
 
   const abort = useCallback(() => {
+    // Resolve any pending approval prompt as a denial before aborting.
+    if (approvalResolver.current) resolveApproval('deny');
     session.abort();
     setStatus((s) => ({ ...s, busy: false }));
     pushNotice('Aborted.', 'error');
     flushLive();
-  }, [session, pushNotice, flushLive]);
+  }, [session, pushNotice, flushLive, resolveApproval]);
 
   const listSkills = useCallback(() => session.skillList, [session]);
 
@@ -236,6 +275,8 @@ export function useAgent(config: Config): UseAgent {
     clear,
     restart,
     refreshProvider,
+    pendingApproval,
+    resolveApproval,
     listSkills,
     installSkill,
     removeSkill,
