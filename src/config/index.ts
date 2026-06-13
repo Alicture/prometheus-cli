@@ -45,6 +45,9 @@ export const DockerConfigSchema = z.object({
   containerId: z.string().default(''),
   // Keep the container alive after exit instead of auto-removing it.
   persistent: z.boolean().default(false),
+  // Docker daemon endpoint. Empty -> use the docker CLI default / DOCKER_HOST.
+  // Examples: 'unix:///Users/me/.colima/default/docker.sock', 'tcp://1.2.3.4:2375'.
+  host: z.string().default(''),
 });
 
 export const SSHConfigSchema = z.object({
@@ -83,7 +86,9 @@ export const ConfigSchema = z.object({
   commandTimeoutMs: z.number().default(120_000),
 
   // ---- Execution environment ----
-  environment: EnvironmentSchema.default('docker'),
+  // Default to 'local' so a fresh install runs without Docker. Switch with
+  // `prometheus config set environment docker` (or ssh) when desired.
+  environment: EnvironmentSchema.default('local'),
   docker: DockerConfigSchema.default({}),
   ssh: SSHConfigSchema.default({}),
   local: LocalConfigSchema.default({}),

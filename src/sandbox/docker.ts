@@ -28,17 +28,28 @@ export class DockerSandbox implements Sandbox {
   }
 
   private async docker(args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<ExecResult> {
-    return spawnCapture('docker', args, { input: opts.input, timeoutMs: opts.timeoutMs });
+    // Point the docker CLI at a custom daemon when configured (config wins over
+    // any inherited DOCKER_HOST so behaviour is reproducible).
+    const env = this.cfg.host
+      ? { ...process.env, DOCKER_HOST: this.cfg.host }
+      : process.env;
+    return spawnCapture('docker', args, { input: opts.input, timeoutMs: opts.timeoutMs, env });
   }
 
   async start(onStatus?: SandboxStatus): Promise<void> {
     onStatus?.('creating');
 
-    // 1. Verify docker is installed.
+    // 1. Verify docker is installed and the daemon is reachable.
     const ver = await this.docker(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 10_000 });
     if (ver.exitCode !== 0) {
-      onStatus?.('error', 'Docker is not available. Is Docker Desktop running?');
-      throw new Error('docker CLI unavailable: ' + ver.stderr.trim());
+      const where = this.cfg.host || process.env.DOCKER_HOST || 'the default Docker socket';
+      const hint =
+        `Cannot reach the Docker daemon at ${where}. ` +
+        `Start Docker (or colima), set the daemon endpoint with ` +
+        `\`prometheus config set docker.host <DOCKER_HOST>\`, or switch to local ` +
+        `execution with \`prometheus config set environment local\`.`;
+      onStatus?.('error', hint);
+      throw new Error('docker CLI unavailable: ' + (ver.stderr.trim() || hint));
     }
 
     // 2. Reuse an existing container if one was configured and is present.

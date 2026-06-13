@@ -14,7 +14,7 @@ There is no backend server — everything runs from the CLI.
 ```
 ✶ PROMETHEUS
 agentic coding in your terminal · hermes (claude-haiku-4-20250414)
-environment: Docker: claude-sandbox
+environment: Local: ~/project
 
 › refactor the auth module and run the tests
 
@@ -28,9 +28,10 @@ environment: Docker: claude-sandbox
   with full streaming and tool-use. OpenAI-compatible `/v1/chat/completions` is
   also supported (`apiFormat: openai`) for proxy gateways.
 - **Configurable environment** (the core feature):
-  - `docker` — spins up / reuses a container via the `docker` CLI
+  - `local` — runs directly on your machine (default)
+  - `docker` — spins up / reuses a container via the `docker` CLI (set
+    `docker.host` for a custom daemon such as colima)
   - `ssh` — runs on any remote Linux host over SSH (SFTP for file I/O)
-  - `local` — runs directly on your machine
 - **Three model tiers** — Hermes / Athena / Zeus (haiku / sonnet / opus by
   default), fully configurable and switchable at runtime with `/model`.
 - **Six tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob — mirrored
@@ -59,9 +60,11 @@ you need a reachable host.
 # 1. Configure your Claude-compatible API key
 prometheus config set apiKey sk-ant-...        # or export ANTHROPIC_API_KEY
 
-# 2. Pick an environment
-prometheus config set environment docker        # docker | ssh | local
-prometheus config set docker.image claude-sandbox
+# 2. Pick an environment (defaults to `local`)
+prometheus config set environment local         # local | docker | ssh
+# For Docker, optionally point at a custom daemon (e.g. colima):
+# prometheus config set environment docker
+# prometheus config set docker.host unix:///Users/me/.colima/default/docker.sock
 
 # 3. Run
 prometheus
@@ -90,8 +93,9 @@ prometheus config set <key> <value>     # dotted keys supported
 | `apiFormat` | `anthropic` or `openai` | `anthropic` |
 | `selectedTier` | `hermes` / `athena` / `zeus` | `hermes` |
 | `modelHermes` / `modelAthena` / `modelZeus` | model IDs per tier | claude haiku/sonnet/opus |
-| `environment` | `docker` / `ssh` / `local` | `docker` |
+| `environment` | `local` / `docker` / `ssh` | `local` |
 | `docker.image` | sandbox image | `claude-sandbox` |
+| `docker.host` | Docker daemon endpoint (else `DOCKER_HOST`) | (default socket) |
 | `docker.containerId` | reuse an existing container | (none) |
 | `docker.persistent` | keep container after exit | `false` |
 | `ssh.host` / `ssh.port` / `ssh.username` | remote target | |
