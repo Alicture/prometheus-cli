@@ -21,6 +21,7 @@ export interface UseAgent {
   pushNotice: (text: string, level?: 'info' | 'error') => void;
   clear: () => void;
   restart: () => Promise<void>;
+  refreshProvider: () => void;
   listSkills: () => Skill[];
   installSkill: (spec: string) => Promise<void>;
   removeSkill: (name: string) => void;
@@ -194,6 +195,10 @@ export function useAgent(config: Config): UseAgent {
 
   const listSkills = useCallback(() => session.skillList, [session]);
 
+  const refreshProvider = useCallback(() => {
+    session.rebuildLLM();
+  }, [session]);
+
   const installSkill = useCallback(
     async (spec: string) => {
       pushNotice(`Installing skill from ${spec}…`);
@@ -230,6 +235,7 @@ export function useAgent(config: Config): UseAgent {
     pushNotice,
     clear,
     restart,
+    refreshProvider,
     listSkills,
     installSkill,
     removeSkill,

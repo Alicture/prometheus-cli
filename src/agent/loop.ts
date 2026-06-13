@@ -102,6 +102,12 @@ export class AgentSession {
     return this.loadedSkills;
   }
 
+  // Rebuild the LLM client from the (possibly mutated) config, e.g. after the
+  // user changes the API key / base URL / format via the /provider command.
+  rebuildLLM(): void {
+    this.llm = createLLMClient(this.config);
+  }
+
   get skillList(): Skill[] {
     return this.loadedSkills;
   }

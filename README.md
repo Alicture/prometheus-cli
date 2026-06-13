@@ -121,6 +121,12 @@ prometheus config set ssh.workspace '~/project'
 | `/model` | open the interactive model picker |
 | `/model <tier>` | switch model tier (hermes / athena / zeus) |
 | `/model set <tier> <id>` | set the model ID for a tier |
+| `/provider` | show provider settings (API key masked) |
+| `/provider key <k>` | set the API key (takes effect immediately) |
+| `/provider url <url>` | set the base URL (empty = provider default) |
+| `/provider format <anthropic\|openai>` | set the API format |
+| `/provider version <v>` | set the `anthropic-version` header |
+| `/provider clear <key\|url>` | unset the API key or base URL |
 | `/skills` | list installed skills |
 | `/skill install <repo>` | install a skill from GitHub |
 | `/skill remove <name>` | remove an installed skill |

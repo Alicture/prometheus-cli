@@ -24,6 +24,7 @@ import { SlashSuggest, type SlashCommand } from './components/SlashSuggest.js';
 const COMMANDS: SlashCommand[] = [
   { name: 'help', desc: 'show help' },
   { name: 'model', args: '[tier]', desc: 'switch tier / open model picker' },
+  { name: 'provider', args: '[key|url|format|...] <value>', desc: 'configure the LLM provider' },
   { name: 'skills', desc: 'list installed skills' },
   { name: 'skill', args: 'install <repo>', desc: 'install a skill from GitHub' },
   { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
@@ -37,6 +38,12 @@ const HELP = [
   '/model                 open the interactive model picker',
   '/model <tier>          switch tier: hermes | athena | zeus',
   '/model set <t> <id>    set the model ID for a tier',
+  '/provider              show provider settings (key masked)',
+  '/provider key <k>      set the API key',
+  '/provider url <url>    set the base URL (empty = provider default)',
+  '/provider format <f>   set API format: anthropic | openai',
+  '/provider version <v>  set the anthropic-version header',
+  '/provider clear key|url  unset the API key or base URL',
   '/skills                list installed skills',
   '/skill install <repo>  install a skill from GitHub (owner/repo[/subdir][#ref])',
   '/skill remove <name>   remove an installed skill',
@@ -169,6 +176,84 @@ export function App({ config }: { config: Config }) {
     agent.pushNotice(`${TIER_LABELS[target]} model → ${modelId}`);
   };
 
+  const handleProviderCommand = (rest: string[]) => {
+    const maskedKey = config.apiKey ? config.apiKey.slice(0, 3) + '••••' : '(none)';
+    const sub = rest[0];
+    if (!sub) {
+      agent.pushNotice(
+        `Provider settings:\n` +
+          `• apiKey: ${maskedKey}\n` +
+          `• baseURL: ${config.baseURL || '(provider default)'}\n` +
+          `• apiFormat: ${config.apiFormat}\n` +
+          `• anthropicVersion: ${config.anthropicVersion}\n` +
+          `Use: /provider key <k> | url <url> | format <anthropic|openai> | version <v> | clear key|url`,
+      );
+      return;
+    }
+    const value = rest.slice(1).join(' ').trim();
+    switch (sub) {
+      case 'key':
+      case 'apikey':
+        if (!value) {
+          agent.pushNotice('Usage: /provider key <api-key>', 'error');
+          return;
+        }
+        config.apiKey = value;
+        saveConfig(config);
+        agent.refreshProvider();
+        agent.pushNotice(`API key set (${value.slice(0, 3)}••••).`);
+        break;
+      case 'url':
+      case 'baseurl':
+        config.baseURL = value;
+        saveConfig(config);
+        agent.refreshProvider();
+        agent.pushNotice(`Base URL → ${value || '(provider default)'}`);
+        break;
+      case 'format': {
+        if (value !== 'anthropic' && value !== 'openai') {
+          agent.pushNotice('Usage: /provider format <anthropic|openai>', 'error');
+          return;
+        }
+        config.apiFormat = value;
+        saveConfig(config);
+        agent.refreshProvider();
+        agent.pushNotice(`API format → ${value}`);
+        break;
+      }
+      case 'version':
+        if (!value) {
+          agent.pushNotice('Usage: /provider version <anthropic-version>', 'error');
+          return;
+        }
+        config.anthropicVersion = value;
+        saveConfig(config);
+        agent.refreshProvider();
+        agent.pushNotice(`anthropic-version → ${value}`);
+        break;
+      case 'clear': {
+        const target = value;
+        if (target === 'key' || target === 'apikey') {
+          config.apiKey = '';
+        } else if (target === 'url' || target === 'baseurl') {
+          config.baseURL = '';
+        } else {
+          agent.pushNotice('Usage: /provider clear <key|url>', 'error');
+          return;
+        }
+        saveConfig(config);
+        agent.refreshProvider();
+        agent.pushNotice(`Cleared ${target}.`);
+        break;
+      }
+      default:
+        agent.pushNotice(
+          'Usage: /provider [key <k>|url <url>|format <anthropic|openai>|version <v>|clear key|url]',
+          'error',
+        );
+    }
+  };
+
   const handleModelCommand = (rest: string[]) => {
     if (rest.length === 0) {
       setPickerOpen(true);
@@ -278,6 +363,9 @@ export function App({ config }: { config: Config }) {
         break;
       case 'model':
         handleModelCommand(rest);
+        break;
+      case 'provider':
+        handleProviderCommand(rest);
         break;
       case 'skills':
         showSkills();
