@@ -27,8 +27,8 @@ const COMMANDS: SlashCommand[] = [
   { name: 'help', desc: 'show help' },
   { name: 'model', args: '[tier]', desc: 'switch tier / open model picker' },
   { name: 'provider', args: '[key|url|format|...] <value>', desc: 'configure the LLM provider' },
-  { name: 'skills', desc: 'list installed skills' },
-  { name: 'skill', args: 'install <repo>', desc: 'install a skill from GitHub' },
+  { name: 'skills', desc: 'list available skills (all sources)' },
+  { name: 'skill', args: 'install <repo>', desc: 'install Claude Code skills from GitHub' },
   { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
   { name: 'permissions', args: '[ask|auto|readonly]', desc: 'view or set the tool permission mode' },
   { name: 'clear', desc: 'clear the conversation' },
@@ -46,8 +46,12 @@ const HELP = [
   '/provider format <f>   set API format: anthropic | openai',
   '/provider version <v>  set the anthropic-version header',
   '/provider clear key|url  unset the API key or base URL',
-  '/skills                list installed skills',
-  '/skill install <repo>  install a skill from GitHub (owner/repo[/subdir][#ref])',
+  '/skills                list available skills (all sources)',
+  '/skill install <repo>  install skills from GitHub (owner/repo[/subdir][#ref]) [name…]',
+  '/skill search <repo>   list the skills a repo provides (no install)',
+  '/skill info <name>     show a skill\'s details',
+  '/skill dirs            show every directory scanned for skills',
+  '/skill reload          rescan skill directories',
   '/skill remove <name>   remove an installed skill',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
@@ -131,12 +135,51 @@ export function App({ config }: { config: Config }) {
   const handleSkillCommand = (rest: string[]) => {
     const sub = rest[0];
     if (sub === 'install' || sub === 'add') {
-      const spec = rest.slice(1).join(' ').trim();
-      if (!spec) {
-        agent.pushNotice('Usage: /skill install <owner/repo[/subdir][#ref]>', 'error');
+      const args = rest.slice(1).filter(Boolean);
+      if (args.length === 0) {
+        agent.pushNotice('Usage: /skill install <owner/repo[/subdir][#ref]> [skill-name…]', 'error');
         return;
       }
-      void agent.installSkill(spec);
+      void agent.installSkill(args[0], args.slice(1));
+      return;
+    }
+    if (sub === 'search' || sub === 'preview') {
+      const spec = rest.slice(1).join(' ').trim();
+      if (!spec) {
+        agent.pushNotice('Usage: /skill search <owner/repo>', 'error');
+        return;
+      }
+      void agent.searchSkills(spec);
+      return;
+    }
+    if (sub === 'info' || sub === 'show') {
+      const name = rest.slice(1).join(' ').trim();
+      const skill = agent.listSkills().find((s) => s.name.toLowerCase() === name.toLowerCase());
+      if (!skill) {
+        agent.pushNotice(`Skill not found: ${name}`, 'error');
+        return;
+      }
+      const lines = [
+        `${skill.name}${skill.version ? ` (v${skill.version})` : ''}`,
+        `  ${skill.description || '(no description)'}`,
+        `  source: ${skill.source} — ${skill.origin}`,
+        `  path:   ${skill.path}`,
+      ];
+      if (skill.allowedTools?.length) lines.push(`  tools:  ${skill.allowedTools.join(', ')}`);
+      if (skill.resources.length) lines.push(`  files:  ${skill.resources.slice(0, 8).join(', ')}`);
+      agent.pushNotice(lines.join('\n'));
+      return;
+    }
+    if (sub === 'dirs' || sub === 'paths') {
+      const lines = agent
+        .skillDirs()
+        .map((r) => `• [${r.source}] ${r.label} — ${r.exists ? `${r.count} skill(s)` : 'missing'}`);
+      agent.pushNotice('Skill search paths (highest precedence first):\n' + lines.join('\n'));
+      return;
+    }
+    if (sub === 'reload' || sub === 'refresh') {
+      agent.refreshSkills();
+      agent.pushNotice(`Reloaded skills (${agent.listSkills().length} available).`);
       return;
     }
     if (sub === 'remove' || sub === 'rm') {
@@ -148,17 +191,25 @@ export function App({ config }: { config: Config }) {
       agent.removeSkill(name);
       return;
     }
-    agent.pushNotice('Usage: /skill install <repo> | /skill remove <name>', 'error');
+    agent.pushNotice(
+      'Usage: /skill install <repo> [name…] | search <repo> | info <name> | dirs | reload | remove <name>',
+      'error',
+    );
   };
 
   const showSkills = () => {
     const list = agent.listSkills();
     if (list.length === 0) {
-      agent.pushNotice('No skills installed. Add one with: /skill install <owner/repo>');
+      agent.pushNotice(
+        'No skills found. Add one with: /skill install <owner/repo>\n' +
+          'Claude Code skills in ~/.claude/skills are picked up automatically (/skill dirs).',
+      );
       return;
     }
-    const lines = list.map((s) => `• ${s.name} — ${s.description || '(no description)'}`);
-    agent.pushNotice('Installed skills:\n' + lines.join('\n'));
+    const lines = list.map(
+      (s) => `• ${s.name} [${s.source}] — ${s.description || '(no description)'}`,
+    );
+    agent.pushNotice(`${list.length} skill(s) available:\n` + lines.join('\n'));
   };
 
   const switchTier = (next: Tier) => {

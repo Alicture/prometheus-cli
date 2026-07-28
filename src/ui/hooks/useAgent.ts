@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
-import { SkillManager, type Skill } from '../../skills/index.js';
+import { SkillManager, createSkillManager, type Skill, type SkillRoot } from '../../skills/index.js';
 import type { AgentEvent, ApprovalDecision, ApprovalRequest } from '../../types.js';
 import type { UIItem, UIStatus } from '../types.js';
 
@@ -25,13 +25,16 @@ export interface UseAgent {
   pendingApproval: ApprovalRequest | null;
   resolveApproval: (decision: ApprovalDecision) => void;
   listSkills: () => Skill[];
-  installSkill: (spec: string) => Promise<void>;
+  installSkill: (spec: string, only?: string[]) => Promise<void>;
+  searchSkills: (spec: string) => Promise<void>;
+  skillDirs: () => Array<SkillRoot & { exists: boolean; count: number }>;
+  refreshSkills: () => void;
   removeSkill: (name: string) => void;
 }
 
 export function useAgent(config: Config): UseAgent {
   const skillsRef = useRef<SkillManager | null>(null);
-  if (!skillsRef.current) skillsRef.current = new SkillManager();
+  if (!skillsRef.current) skillsRef.current = createSkillManager(config);
   const skills = skillsRef.current;
 
   const sessionRef = useRef<AgentSession | null>(null);
@@ -239,12 +242,13 @@ export function useAgent(config: Config): UseAgent {
   }, [session]);
 
   const installSkill = useCallback(
-    async (spec: string) => {
-      pushNotice(`Installing skill from ${spec}…`);
+    async (spec: string, only?: string[]) => {
+      pushNotice(`Installing skills from ${spec}…`);
       try {
-        const names = await skills.installFromGitHub(spec);
+        const installed = await skills.install(spec, only);
         session.reloadSkills();
-        pushNotice(`Installed skill(s): ${names.join(', ')}`);
+        const lines = installed.map((s) => `  ${s.name} — ${s.description || '(no description)'}`);
+        pushNotice(`Installed ${installed.length} skill(s):\n${lines.join('\n')}`);
       } catch (err) {
         pushNotice(`Skill install failed: ${(err as Error).message}`, 'error');
       }
@@ -252,11 +256,33 @@ export function useAgent(config: Config): UseAgent {
     [skills, session, pushNotice],
   );
 
+  const searchSkills = useCallback(
+    async (spec: string) => {
+      pushNotice(`Looking up skills in ${spec}…`);
+      try {
+        const names = await skills.preview(spec);
+        pushNotice(
+          `${names.length} skill(s) in ${spec}:\n${names.map((n) => `  ${n}`).join('\n')}\n` +
+            `Install all with: /skill install ${spec}`,
+        );
+      } catch (err) {
+        pushNotice(`Skill search failed: ${(err as Error).message}`, 'error');
+      }
+    },
+    [skills, pushNotice],
+  );
+
+  const skillDirs = useCallback(() => skills.rootStatus(), [skills]);
+
+  const refreshSkills = useCallback(() => {
+    session.reloadSkills();
+  }, [session]);
+
   const removeSkill = useCallback(
     (name: string) => {
-      const ok = skills.remove(name);
+      const result = skills.remove(name);
       session.reloadSkills();
-      pushNotice(ok ? `Removed skill: ${name}` : `Skill not found: ${name}`, ok ? 'info' : 'error');
+      pushNotice(result.ok ? `Removed skill: ${name}` : result.reason!, result.ok ? 'info' : 'error');
     },
     [skills, session, pushNotice],
   );
@@ -279,6 +305,9 @@ export function useAgent(config: Config): UseAgent {
     resolveApproval,
     listSkills,
     installSkill,
+    searchSkills,
+    skillDirs,
+    refreshSkills,
     removeSkill,
   };
 }

@@ -76,6 +76,17 @@ export const PermissionsSchema = z.object({
   allow: z.array(z.string()).default([]),
 });
 
+// Claude Code compatible skill discovery.
+export const SkillsConfigSchema = z.object({
+  // Also scan ~/.claude/skills, ~/.agents/skills and installed Claude Code
+  // plugin skill directories.
+  includeClaude: z.boolean().default(true),
+  // Extra directories to scan for SKILL.md files.
+  paths: z.array(z.string()).default([]),
+  // Skill names to hide from the model.
+  disabled: z.array(z.string()).default([]),
+});
+
 export const ConfigSchema = z.object({
   // ---- LLM / Claude-compatible API ----
   apiKey: z.string().default(''),
@@ -108,12 +119,16 @@ export const ConfigSchema = z.object({
 
   // ---- Tool permissions ----
   permissions: PermissionsSchema.default({}),
+
+  // ---- Skills ----
+  skills: SkillsConfigSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type DockerConfig = z.infer<typeof DockerConfigSchema>;
 export type SSHConfig = z.infer<typeof SSHConfigSchema>;
 export type LocalConfig = z.infer<typeof LocalConfigSchema>;
+export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 
 export function defaultConfig(): Config {
   return ConfigSchema.parse({});

@@ -15,7 +15,7 @@ import {
   ALL_TIERS,
 } from './config/index.js';
 import { setConfigKey, flattenConfig } from './config/cli.js';
-import { SkillManager } from './skills/index.js';
+import { createSkillManager } from './skills/index.js';
 import { App } from './ui/App.js';
 
 const cli = meow(
@@ -30,8 +30,11 @@ const cli = meow(
     $ prometheus models                list model tiers and their IDs
     $ prometheus models use <tier>     set the active tier
     $ prometheus models set <t> <id>   set the model ID for a tier
-    $ prometheus skill list            list installed skills
-    $ prometheus skill install <repo>  install a skill from GitHub (owner/repo[/subdir][#ref])
+    $ prometheus skill list            list available skills (all sources)
+    $ prometheus skill install <repo>  install skills from GitHub (owner/repo[/subdir][#ref])
+    $ prometheus skill search <repo>   list the skills a repo provides (no install)
+    $ prometheus skill info <name>     show a skill's details
+    $ prometheus skill dirs            show every directory scanned for skills
     $ prometheus skill remove <name>   remove an installed skill
 
   Config keys (examples)
@@ -59,40 +62,99 @@ async function main() {
   const [command, ...rest] = cli.input;
 
   if (command === 'skill' || command === 'skills') {
-    const skills = new SkillManager();
+    const skills = createSkillManager(loadConfig());
     const sub = rest[0];
+
     if (sub === 'install' || sub === 'add') {
-      const spec = rest.slice(1).join(' ').trim();
+      const args = rest.slice(1).filter(Boolean);
+      const spec = args[0];
       if (!spec) {
-        console.error('Usage: prometheus skill install <owner/repo[/subdir][#ref]>');
+        console.error('Usage: prometheus skill install <owner/repo[/subdir][#ref]> [skill-name…]');
         process.exit(1);
       }
       try {
-        console.log(`Installing skill from ${spec}…`);
-        const names = await skills.installFromGitHub(spec);
-        console.log(`Installed: ${names.join(', ')}`);
+        console.log(`Installing skills from ${spec}…`);
+        const installed = await skills.install(spec, args.slice(1));
+        console.log(`Installed ${installed.length} skill(s) into ${skills.installDir}:\n`);
+        for (const s of installed) {
+          console.log(`  ${s.name}\n    ${s.description || '(no description)'}`);
+        }
       } catch (err) {
         console.error(`Install failed: ${(err as Error).message}`);
         process.exit(1);
       }
       return;
     }
-    if (sub === 'remove' || sub === 'rm') {
-      const name = rest.slice(1).join(' ').trim();
-      const ok = skills.remove(name);
-      console.log(ok ? `Removed: ${name}` : `Skill not found: ${name}`);
-      if (!ok) process.exit(1);
+
+    if (sub === 'search' || sub === 'preview') {
+      const spec = rest.slice(1).join(' ').trim();
+      if (!spec) {
+        console.error('Usage: prometheus skill search <owner/repo[/subdir][#ref]>');
+        process.exit(1);
+      }
+      try {
+        const names = await skills.preview(spec);
+        console.log(`${names.length} skill(s) in ${spec}:\n`);
+        for (const n of names) console.log(`  ${n}`);
+        console.log(`\nInstall all:  prometheus skill install ${spec}`);
+        if (names[0]) console.log(`Install one:  prometheus skill install ${spec} ${names[0]}`);
+      } catch (err) {
+        console.error(`Search failed: ${(err as Error).message}`);
+        process.exit(1);
+      }
       return;
     }
+
+    if (sub === 'info' || sub === 'show') {
+      const name = rest.slice(1).join(' ').trim();
+      const skill = skills.get(name);
+      if (!skill) {
+        console.error(`Skill not found: ${name}`);
+        process.exit(1);
+        return;
+      }
+      console.log(`${skill.name}`);
+      console.log(`  description : ${skill.description || '(none)'}`);
+      if (skill.version) console.log(`  version     : ${skill.version}`);
+      if (skill.license) console.log(`  license     : ${skill.license}`);
+      if (skill.allowedTools?.length) console.log(`  tools       : ${skill.allowedTools.join(', ')}`);
+      console.log(`  source      : ${skill.source} (${skill.origin})`);
+      console.log(`  path        : ${skill.path}`);
+      if (skill.resources.length) {
+        console.log(`  files       : ${skill.resources.slice(0, 10).join(', ')}`);
+      }
+      return;
+    }
+
+    if (sub === 'dirs' || sub === 'paths') {
+      console.log('Skill search paths (highest precedence first):\n');
+      for (const root of skills.rootStatus()) {
+        const status = root.exists ? `${root.count} skill(s)` : 'missing';
+        console.log(`  [${root.source}] ${root.label} — ${status}`);
+      }
+      console.log(`\nInstall target: ${skills.installDir}`);
+      return;
+    }
+
+    if (sub === 'remove' || sub === 'rm' || sub === 'uninstall') {
+      const name = rest.slice(1).join(' ').trim();
+      const result = skills.remove(name);
+      console.log(result.ok ? `Removed: ${name}` : result.reason);
+      if (!result.ok) process.exit(1);
+      return;
+    }
+
     // Default: list.
     const list = skills.list();
     if (list.length === 0) {
-      console.log('No skills installed. Add one with: prometheus skill install <owner/repo>');
+      console.log('No skills found. Add one with: prometheus skill install <owner/repo>');
+      console.log('Claude Code skills in ~/.claude/skills are picked up automatically.');
       return;
     }
-    console.log('Installed skills:\n');
+    console.log(`${list.length} skill(s) available:\n`);
     for (const s of list) {
-      console.log(`  ${s.name}\n    ${s.description || '(no description)'}`);
+      console.log(`  ${s.name}  [${s.source}]`);
+      console.log(`    ${s.description || '(no description)'}`);
     }
     return;
   }

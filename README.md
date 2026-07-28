@@ -62,8 +62,9 @@ environment: Local: ~/project
 - 🔧 **Built-in tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob.
 - 🔐 **Permission system** — side-effecting tools prompt for approval; read-only
   tools run freely. Approve once, approve for the session, or deny.
-- 🧩 **Skills** — install agent skills straight from GitHub and surface them to the
-  model on demand.
+- 🧩 **Claude Code compatible skills** — auto-discovers skills from `~/.claude/skills`,
+  project `.claude/skills`, and installed Claude Code plugins, and installs new ones
+  straight from GitHub (no `git` required).
 - ⌨️ **Slash-command autocomplete** — type `/` for a live suggestion menu.
 - 📊 **Live TUI** — streaming responses, tool activity log, token + cost status bar.
 
@@ -127,6 +128,9 @@ prometheus config set <key> <value>     # dotted keys supported
 | `local.workspace` | local working dir | cwd |
 | `permissions.mode` | `ask` / `auto` / `readonly` | `ask` |
 | `permissions.allow` | tool names allowed without prompting | `[]` |
+| `skills.includeClaude` | scan Claude Code skill dirs (`~/.claude`, `~/.agents`, plugins) | `true` |
+| `skills.paths` | extra directories to scan for skills | `[]` |
+| `skills.disabled` | skill names to hide from the model | `[]` |
 
 <details>
 <summary><b>Example: remote SSH environment</b></summary>
@@ -165,8 +169,12 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 | `/provider format <anthropic\|openai>` | set the API format |
 | `/provider version <v>` | set the `anthropic-version` header |
 | `/provider clear <key\|url>` | unset the API key or base URL |
-| `/skills` | list installed skills |
-| `/skill install <repo>` | install a skill from GitHub |
+| `/skills` | list available skills (all sources) |
+| `/skill install <repo> [name…]` | install skills from GitHub |
+| `/skill search <repo>` | list the skills a repo provides |
+| `/skill info <name>` | show a skill's metadata, path, bundled files |
+| `/skill dirs` | show every directory scanned for skills |
+| `/skill reload` | rescan skill directories |
 | `/skill remove <name>` | remove an installed skill |
 | `/env` | show the current environment + API base URL |
 | `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
@@ -221,23 +229,68 @@ Set the mode with `/permissions <mode>` or `permissions.mode`:
 
 ## Skills
 
-Install **agent skills** — a directory containing a `SKILL.md` with `name` and
-`description` frontmatter plus instructions — straight from GitHub:
+Prometheus is **compatible with [Claude Code Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview)** —
+a directory containing a `SKILL.md` with `name`/`description` frontmatter plus
+instructions and optional bundled files.
+
+### Automatic discovery
+
+Skills you already have for Claude Code work with no migration. Prometheus scans,
+in precedence order:
+
+| Precedence | Location | Source |
+|---|---|---|
+| 1 | `./.claude/skills`, `./.agents/skills` | project |
+| 2 | `~/.prometheus/skills` | installed by Prometheus |
+| 3 | `~/.claude/skills`, `~/.agents/skills` | user |
+| 4 | `~/.claude/plugins/**/skills` | Claude Code plugins |
+| 5 | `skills.paths` from your config | extra |
 
 ```bash
-prometheus skill install owner/repo                 # SKILL.md at repo root
-prometheus skill install owner/repo/skills/pdf      # SKILL.md in a subdirectory
-prometheus skill install owner/repo#v2              # a specific branch/tag
-prometheus skill install https://github.com/owner/repo/tree/main/skills/pdf
-prometheus skill list
+prometheus skill dirs     # show every scanned directory + how many skills it holds
+prometheus skill list     # merged, de-duplicated list with its source
+```
+
+### Installing
+
+Install from any GitHub repo — including Claude Code skill repos that keep skills
+under `skills/` or ship them inside a plugin. Every `SKILL.md` in the tree is
+discovered, and downloads use the GitHub tarball API (**no `git` required**, with a
+`git clone` fallback for private repos).
+
+```bash
+prometheus skill search anthropics/skills             # see what a repo provides
+prometheus skill install anthropics/skills            # install all of them
+prometheus skill install anthropics/skills pdf docx   # install only these
+prometheus skill install owner/repo/skills/pdf        # a specific subdirectory
+prometheus skill install owner/repo#v2                # a branch or tag
+prometheus skill install ./local/skill-dir            # a local directory
+prometheus skill info pdf                             # metadata, path, bundled files
 prometheus skill remove pdf
 ```
 
-Installed skills live in `~/.prometheus/skills/`. Their `name` + `description` are
-injected into the system prompt, and the agent loads a skill's full instructions on
-demand via the built-in `Skill` tool — so skills extend what Prometheus can do
-without bloating every prompt. Manage them in the TUI too with `/skill install`,
-`/skill remove`, and `/skills`.
+Everything is also available in the TUI: `/skills`, `/skill search`,
+`/skill install`, `/skill info`, `/skill dirs`, `/skill reload`, `/skill remove`.
+
+### How skills reach the model
+
+Frontmatter (`name`, `description`, `version`, `license`, `allowed-tools`/`tools`,
+`metadata`) is parsed, and only each skill's **name + description** is injected into
+the system prompt. When a task matches, the agent calls the built-in `Skill` tool,
+which returns the full `SKILL.md` body **plus absolute paths to every bundled file**
+(`references/`, `scripts/`, `assets/`, …) so it can read or execute them — the same
+progressive-disclosure model Claude Code uses.
+
+Skills installed by Prometheus live in `~/.prometheus/skills/`. Skills discovered
+from Claude Code directories are read-only (remove them with Claude Code instead).
+
+Tune discovery in your config:
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `skills.includeClaude` | scan `~/.claude` and `~/.agents` skill dirs | `true` |
+| `skills.paths` | extra directories to scan | `[]` |
+| `skills.disabled` | skill names to hide from the model | `[]` |
 
 ## Architecture
 

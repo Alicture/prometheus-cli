@@ -1,5 +1,9 @@
 import type { Skill } from '../skills/index.js';
 
+// Skill descriptions are the only skill content kept in every prompt
+// (progressive disclosure), so cap them to keep the preamble bounded.
+const MAX_DESC = 400;
+
 export function buildSystemPrompt(workdir: string, skills: Skill[] = []): string {
   const lines = [
     'You are Prometheus, an agentic coding assistant running in a terminal.',
@@ -18,11 +22,16 @@ export function buildSystemPrompt(workdir: string, skills: Skill[] = []): string
   ];
 
   if (skills.length > 0) {
-    lines.push('- Skill: load full instructions for an installed skill by name.');
+    lines.push('- Skill: load full instructions for an available skill by name.');
     lines.push('');
-    lines.push('Available skills (call the Skill tool with the name to load full instructions):');
+    lines.push(
+      `Available skills (${skills.length}). Each entry is a name + when to use it; call the ` +
+        'Skill tool with the name to load its full instructions before acting on it:',
+    );
     for (const s of skills) {
-      lines.push(`- ${s.name}: ${s.description || '(no description)'}`);
+      const desc = s.description || '(no description)';
+      const trimmed = desc.length > MAX_DESC ? `${desc.slice(0, MAX_DESC).trimEnd()}…` : desc;
+      lines.push(`- ${s.name}: ${trimmed}`);
     }
   }
 

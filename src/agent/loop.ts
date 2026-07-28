@@ -6,7 +6,7 @@ import type { LLMClient } from '../llm/index.js';
 import { createLLMClient } from '../llm/index.js';
 import { allTools } from '../tools/index.js';
 import { makeSkillTool } from '../tools/skill.js';
-import { SkillManager, type Skill } from '../skills/index.js';
+import { SkillManager, createSkillManager, type Skill } from '../skills/index.js';
 import type {
   AgentEvent,
   ApprovalDecision,
@@ -51,7 +51,7 @@ export class AgentSession {
   // Tool names approved for the rest of this session ("always allow").
   private sessionAllow = new Set<string>();
 
-  constructor(config: Config, skills: SkillManager = new SkillManager()) {
+  constructor(config: Config, skills: SkillManager = createSkillManager(config)) {
     this.config = config;
     this.sandbox = createSandbox(config);
     this.llm = createLLMClient(config);
