@@ -67,6 +67,9 @@ environment: Local: ~/project
   straight from GitHub (no `git` required).
 - ⌨️ **Slash-command autocomplete** — type `/` for a live suggestion menu.
 - 📊 **Live TUI** — streaming responses, tool activity log, token + cost status bar.
+- 📝 **Markdown rendering** — assistant replies render as real terminal output:
+  box-drawn tables that auto-fit your width, headings, bold/italic, inline code,
+  fenced code blocks, lists, task lists, blockquotes, and links (CJK-width aware).
 
 ## Install
 
@@ -302,9 +305,29 @@ src/
   agent/             agentic loop, system prompt, cost estimate
   tools/             Bash / FileRead / FileWrite / FileEdit / Grep / Glob / Skill
   sandbox/           docker | ssh | local executors (Sandbox interface)
-  skills/            SkillManager: install (GitHub) / list / remove
-  ui/                Ink components, App, useAgent hook
+  skills/            SkillManager: discovery / install (GitHub) / frontmatter
+  ui/                Ink components, App, useAgent hook, markdown renderer
 ```
+
+### Markdown output
+
+Assistant replies are parsed by a dependency-light Markdown parser
+(`src/ui/markdown.ts`) and rendered as Ink elements (`ui/components/Markdown.tsx`).
+Tables are laid out with real column widths — columns take their natural width and
+shrink longest-first with word wrapping when the terminal is narrow — and all
+measurements use display columns, so CJK and emoji stay aligned:
+
+```text
+┌───────────┬─────────────────────────────────────┐
+│ Category  │ Example Skills                      │
+├───────────┼─────────────────────────────────────┤
+│ Frontend  │ frontend-patterns, swiftui-patterns │
+│ Utilities │ pdf, youtube-full, agent-browser    │
+└───────────┴─────────────────────────────────────┘
+```
+
+Soft line breaks are preserved (GFM-style), so the model's intended line structure
+survives rendering.
 
 The agent loop streams a model turn, dispatches any `tool_use` calls into the
 selected sandbox, feeds `tool_result` blocks back, and repeats until the model

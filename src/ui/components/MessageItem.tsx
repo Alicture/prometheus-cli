@@ -3,8 +3,11 @@ import { Box, Text } from 'ink';
 import { theme } from '../theme.js';
 import type { UIItem } from '../types.js';
 import { summarizeToolInput, previewLines } from '../format.js';
+import { Markdown } from './Markdown.js';
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 
 export function MessageItem({ item }: { item: UIItem }) {
+  const width = useTerminalWidth();
   switch (item.kind) {
     case 'user':
       return (
@@ -19,7 +22,7 @@ export function MessageItem({ item }: { item: UIItem }) {
     case 'assistant':
       return (
         <Box marginTop={1}>
-          <Text color={theme.assistant}>{item.text}</Text>
+          <Markdown text={item.text} width={Math.max(20, width - 2)} color={theme.assistant} />
         </Box>
       );
 

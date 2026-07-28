@@ -10,6 +10,11 @@ export const theme = {
   muted: '#565F89',
   notice: '#BB9AF7',
   bg: '#1A1B26',
+  // Markdown rendering
+  code: '#E0AF68',
+  codeBg: '#24283B',
+  link: '#7DCFFF',
+  tableBorder: '#3B4261',
 } as const;
 
 export const TIER_BADGE: Record<string, string> = {
