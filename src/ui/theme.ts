@@ -1,6 +1,7 @@
 // Centralized colors for the Ink UI (Prometheus brand: warm amber/orange).
 export const theme = {
   accent: '#E8943A', // amber
+  accentBright: '#FFB35C', // lighter amber highlight
   accentDim: '#A8662A',
   user: '#7AA2F7',
   assistant: '#C0CAF5',
