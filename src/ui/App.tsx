@@ -32,11 +32,23 @@ const COMMANDS: SlashCommand[] = [
   { name: 'provider', args: '[key|url|format|...] <value>', desc: 'configure the LLM provider' },
   { name: 'skills', desc: 'list available skills (all sources)' },
   { name: 'skill', args: 'install <repo>', desc: 'install Claude Code skills from GitHub' },
+  { name: 'commands', args: '[filter]', desc: 'list slash commands from skills and Claude Code' },
   { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
   { name: 'permissions', args: '[ask|auto|readonly]', desc: 'view or set the tool permission mode' },
   { name: 'clear', desc: 'clear the conversation' },
   { name: 'quit', desc: 'exit Prometheus' },
 ];
+
+// Autocomplete is capped: hundreds of prompt commands can share a prefix.
+const MAX_SUGGESTIONS = 8;
+
+// `/commands` can match hundreds of entries; keep the listing readable.
+const COMMAND_LIST_LIMIT = 60;
+
+function truncate(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? flat.slice(0, max - 1) + '…' : flat;
+}
 
 const HELP = [
   '/help                  show this help',
@@ -56,6 +68,9 @@ const HELP = [
   '/skill dirs            show every directory scanned for skills',
   '/skill reload          rescan skill directories',
   '/skill remove <name>   remove an installed skill',
+  '/commands [filter]     list prompt commands (from commands/ dirs and skills)',
+  '/<skill> [request]     run an installed skill, e.g. /pdf merge a.pdf b.pdf',
+  '/<name> [args]         run a prompt command, e.g. /gsd:add-phase auth',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
   '/permissions           show the tool permission mode',
@@ -97,16 +112,39 @@ export function App({ config }: { config: Config }) {
 
   const model = models[tier];
 
+  // Every invocable name: built-ins first, then prompt commands from
+  // `commands/` directories, then a command per installed skill.
+  const allCommands = useMemo<SlashCommand[]>(() => {
+    const seen = new Set(COMMANDS.map((c) => c.name.toLowerCase()));
+    const out = [...COMMANDS];
+    for (const c of agent.promptCommands) {
+      if (seen.has(c.name.toLowerCase())) continue;
+      seen.add(c.name.toLowerCase());
+      out.push({ name: c.name, args: c.argumentHint, desc: c.description || `prompt command (${c.origin})` });
+    }
+    for (const s of agent.listSkills()) {
+      const name = s.name.toLowerCase();
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name: s.name, args: '[request]', desc: s.description || `skill (${s.origin})` });
+    }
+    return out;
+  }, [agent.promptCommands, agent.listSkills]);
+
   // Slash autocomplete: active while typing a command token (no space yet).
   const slashQuery =
     input.startsWith('/') && !input.includes(' ') ? input.slice(1).toLowerCase() : null;
-  const suggestions =
+  const matches =
     slashQuery !== null && !pickerOpen
-      ? COMMANDS.filter((c) => c.name.startsWith(slashQuery))
+      ? allCommands.filter((c) => c.name.toLowerCase().startsWith(slashQuery))
       : [];
+  // Hundreds of commands can match, so only a screenful is offered.
+  const suggestions = matches.slice(0, MAX_SUGGESTIONS);
+  const hiddenSuggestions = matches.length - suggestions.length;
   // Hide the menu once the exact command is fully typed (e.g. "/help").
   const showSuggest =
-    suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].name === slashQuery);
+    suggestions.length > 0 &&
+    !(matches.length === 1 && suggestions[0].name.toLowerCase() === slashQuery);
 
   useInput((_input, key) => {
     if (pickerOpen || agent.pendingApproval) return;
@@ -122,8 +160,7 @@ export function App({ config }: { config: Config }) {
       }
       if (key.tab) {
         const pick = suggestions[Math.min(suggestIndex, suggestions.length - 1)];
-        const completion = pick.args ? `/${pick.name} ` : `/${pick.name} `;
-        setInput(completion);
+        setInput(`/${pick.name} `);
         setSuggestIndex(0);
         return;
       }
@@ -403,13 +440,97 @@ export function App({ config }: { config: Config }) {
       case 'clear':
         agent.clear();
         break;
+      case 'commands':
+        showCommands(rest);
+        break;
       case 'quit':
       case 'exit':
         exit();
         break;
       default:
-        agent.pushNotice(`Unknown command: /${cmd}`, 'error');
+        runSkillOrPromptCommand(cmd, raw);
     }
+  };
+
+  // Anything that is not a built-in resolves against the discovered prompt
+  // commands and then the installed skills, so `/gsd:add-phase` and `/pdf` work
+  // the same way they do in Claude Code.
+  const runSkillOrPromptCommand = (cmd: string, raw: string) => {
+    // Take the arguments from the raw line so quoting and spacing survive.
+    const args = raw.slice(1).trim().slice(cmd.length).trim();
+
+    const command = agent.promptCommands.find((c) => c.name.toLowerCase() === cmd.toLowerCase());
+    if (command) {
+      if (!agent.ready) {
+        agent.pushNotice('Sandbox is not ready yet.', 'error');
+        return;
+      }
+      if (agent.status.busy) {
+        agent.pushNotice('Still working — press Esc to abort first.', 'error');
+        return;
+      }
+      agent.runPromptCommand(command, args);
+      return;
+    }
+
+    const skill = agent.listSkills().find((s) => s.name.toLowerCase() === cmd.toLowerCase());
+    if (skill) {
+      if (!agent.ready) {
+        agent.pushNotice('Sandbox is not ready yet.', 'error');
+        return;
+      }
+      if (agent.status.busy) {
+        agent.pushNotice('Still working — press Esc to abort first.', 'error');
+        return;
+      }
+      agent.runSkill(skill, args);
+      return;
+    }
+
+    const near = allCommands
+      .filter((c) => c.name.toLowerCase().startsWith(cmd.toLowerCase().slice(0, 3)))
+      .slice(0, 5)
+      .map((c) => `/${c.name}`);
+    agent.pushNotice(
+      `Unknown command: /${cmd}` + (near.length ? `\nDid you mean: ${near.join('  ')}` : ''),
+      'error',
+    );
+  };
+
+  const showCommands = (rest: string[]) => {
+    if (rest[0] === 'dirs') {
+      const lines = agent
+        .commandDirs()
+        .map((r) => `  ${r.exists ? String(r.count).padStart(4) : '   -'}  ${r.source.padEnd(10)} ${r.label}`);
+      agent.pushNotice(`Command directories:\n${lines.join('\n')}`);
+      return;
+    }
+    if (rest[0] === 'reload') {
+      agent.refreshSkills();
+      agent.pushNotice('Reloaded skills and commands.');
+      return;
+    }
+
+    const filter = rest.join(' ').trim().toLowerCase();
+    const all = agent.promptCommands.filter(
+      (c) => !filter || c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter),
+    );
+    if (all.length === 0) {
+      agent.pushNotice(
+        filter ? `No commands match "${filter}".` : 'No prompt commands found. Try /commands dirs.',
+      );
+      return;
+    }
+    const shown = all.slice(0, COMMAND_LIST_LIMIT);
+    const width = Math.max(...shown.map((c) => c.name.length + (c.argumentHint?.length ?? 0) + 1));
+    const lines = shown.map((c) => {
+      const label = `/${c.name}${c.argumentHint ? ' ' + c.argumentHint : ''}`;
+      return `  ${label.padEnd(width + 1)}  ${truncate(c.description, 70)}`;
+    });
+    const more = all.length > shown.length ? `\n  … and ${all.length - shown.length} more` : '';
+    agent.pushNotice(
+      `${all.length} command(s)${filter ? ` matching "${filter}"` : ''}:\n${lines.join('\n')}${more}`,
+    );
   };
 
   const onSubmit = (value: string) => {
@@ -454,7 +575,7 @@ export function App({ config }: { config: Config }) {
       : pickerOpen
         ? ALL_TIERS.length + 4
         : showSuggest
-          ? Math.min(suggestions.length, 6) + 1
+          ? suggestions.length + (hiddenSuggestions > 0 ? 2 : 1)
           : 0) +
     2; // breathing room so a wrapped prompt never overflows
   const liveBudget = Math.max(3, rows - reserved);
@@ -499,7 +620,11 @@ export function App({ config }: { config: Config }) {
         ) : (
           <>
             {showSuggest ? (
-              <SlashSuggest suggestions={suggestions} selected={Math.min(suggestIndex, suggestions.length - 1)} />
+              <SlashSuggest
+                suggestions={suggestions}
+                selected={Math.min(suggestIndex, suggestions.length - 1)}
+                hidden={hiddenSuggestions}
+              />
             ) : null}
             <Box>
               <Text color={theme.accent}>{agent.status.busy ? '… ' : '› '}</Text>

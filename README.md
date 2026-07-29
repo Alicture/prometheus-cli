@@ -62,6 +62,8 @@ environment: Local: ~/project
 - 🔧 **Built-in tools** — Bash, FileRead, FileWrite, FileEdit, Grep, Glob.
 - 🔐 **Permission system** — side-effecting tools prompt for approval; read-only
   tools run freely. Approve once, approve for the session, or deny.
+- ⚡ **Skills and prompt commands as slash commands** — `/pdf`, `/gsd:add-phase` …
+  every installed skill and every Claude Code `commands/*.md` file is invocable directly
 - 🧩 **Claude Code compatible skills** — auto-discovers skills from `~/.claude/skills`,
   project `.claude/skills`, and installed Claude Code plugins, and installs new ones
   straight from GitHub (no `git` required).
@@ -199,6 +201,10 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 | `/skill dirs` | show every directory scanned for skills |
 | `/skill reload` | rescan skill directories |
 | `/skill remove <name>` | remove an installed skill |
+| `/commands [filter]` | list prompt commands from `commands/` dirs and skills |
+| `/commands dirs` | show every directory scanned for commands |
+| `/<skill> [request]` | run an installed skill, e.g. `/pdf merge a.pdf b.pdf` |
+| `/<name> [args]` | run a prompt command, e.g. `/gsd:add-phase auth` |
 | `/env` | show the current environment + API base URL |
 | `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
 | `/permissions [ask\|auto\|readonly]` | view or set the tool permission mode |
@@ -307,11 +313,54 @@ progressive-disclosure model Claude Code uses.
 Skills installed by Prometheus live in `~/.prometheus/skills/`. Skills discovered
 from Claude Code directories are read-only (remove them with Claude Code instead).
 
+### Running a skill directly
+
+Any installed skill is also a slash command. `/pdf merge a.pdf b.pdf` starts a turn
+that loads the `pdf` skill and passes your request along — no need to hope the model
+picks the right skill on its own.
+
+```text
+/pdf extract the tables from report.pdf
+/gsd understand this repo
+```
+
+### Prompt commands
+
+Prometheus also reads Claude Code's `commands/` directories, where each markdown
+file is a reusable prompt. Typing the command sends that prompt as your turn.
+
+| Order | Location | Kind |
+|:-----:|----------|------|
+| 1 | `./.claude/commands`, `./.agents/commands` | project |
+| 2 | `~/.prometheus/commands` | yours |
+| 3 | `~/.claude/commands`, `~/.agents/commands` | user |
+| 4 | `~/.claude/plugins/**/commands` | Claude Code plugins |
+| 5 | `<skill>/commands` | bundled by an installed skill |
+
+Subdirectories namespace the command, exactly as in Claude Code — so
+`~/.claude/commands/gsd/add-phase.md` becomes `/gsd:add-phase`, and commands
+bundled inside a skill are namespaced under that skill's name.
+
+Frontmatter `description` and `argument-hint` show up in autocomplete, and
+`allowed-tools` is passed along as a hint to the model. In the body, `$ARGUMENTS`
+receives everything you typed and `$1`…`$9` the individual words (quotes are
+respected); if a command uses no placeholder, your arguments are appended rather
+than dropped.
+
+```bash
+prometheus commands           # list every discovered command
+prometheus commands gsd       # filter by name or description
+prometheus commands dirs      # show every scanned directory + counts
+```
+
+In the TUI, `/commands [filter]`, `/commands dirs` and `/commands reload` do the same.
+Built-in commands always win, then prompt commands, then skills.
+
 Tune discovery in your config:
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `skills.includeClaude` | scan `~/.claude` and `~/.agents` skill dirs | `true` |
+| `skills.includeClaude` | scan `~/.claude` and `~/.agents` skill and command dirs | `true` |
 | `skills.paths` | extra directories to scan | `[]` |
 | `skills.disabled` | skill names to hide from the model | `[]` |
 
@@ -326,6 +375,7 @@ src/
   tools/             Bash / FileRead / FileWrite / FileEdit / Grep / Glob / Skill
   sandbox/           docker | ssh | local executors (Sandbox interface)
   skills/            SkillManager: discovery / install (GitHub) / frontmatter
+                     CommandManager: Claude Code commands/*.md as slash commands
   ui/                Ink components, App, useAgent hook, markdown renderer
 ```
 

@@ -61,7 +61,7 @@ export interface SkillDiscoveryOptions {
   disabled?: string[];
 }
 
-function tildify(p: string): string {
+export function tildify(p: string): string {
   const home = homedir();
   return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 }
@@ -73,7 +73,7 @@ export function expandPath(p: string, cwd = process.cwd()): string {
   return resolve(cwd, out);
 }
 
-function isDir(p: string): boolean {
+export function isDir(p: string): boolean {
   try {
     return statSync(p).isDirectory();
   } catch {
@@ -81,7 +81,7 @@ function isDir(p: string): boolean {
   }
 }
 
-function safeReaddir(p: string): string[] {
+export function safeReaddir(p: string): string[] {
   try {
     return readdirSync(p);
   } catch {
@@ -163,7 +163,8 @@ export function readSkillDir(dir: string, source: SkillSource = 'prometheus', or
 }
 
 /** Locate `skills/` directories inside installed Claude Code plugins. */
-function pluginSkillRoots(): SkillRoot[] {
+// Plugin roots of a given kind: every plugin's `skills` or `commands` directory.
+export function pluginRoots(kind: 'skills' | 'commands'): SkillRoot[] {
   const roots: SkillRoot[] = [];
   const bases = ['marketplaces', 'cache', 'data', 'repos'].map((d) => join(CLAUDE_HOME, 'plugins', d));
   for (const base of bases) {
@@ -173,13 +174,14 @@ function pluginSkillRoots(): SkillRoot[] {
       if (!isDir(ownerDir)) continue;
       const candidates = [ownerDir, ...safeReaddir(ownerDir).map((e) => join(ownerDir, e))];
       for (const candidate of candidates) {
-        const skillsDir = join(candidate, 'skills');
-        if (isDir(skillsDir)) roots.push({ dir: skillsDir, source: 'plugin', label: tildify(skillsDir) });
+        const dir = join(candidate, kind);
+        if (isDir(dir)) roots.push({ dir, source: 'plugin', label: tildify(dir) });
       }
     }
   }
   return roots;
 }
+
 
 /** All roots scanned for skills, in precedence order. */
 export function skillRoots(options: SkillDiscoveryOptions = {}): SkillRoot[] {
@@ -194,7 +196,7 @@ export function skillRoots(options: SkillDiscoveryOptions = {}): SkillRoot[] {
   if (includeClaude) {
     roots.push({ dir: join(CLAUDE_HOME, 'skills'), source: 'user', label: '~/.claude/skills' });
     roots.push({ dir: join(homedir(), '.agents', 'skills'), source: 'user', label: '~/.agents/skills' });
-    roots.push(...pluginSkillRoots());
+    roots.push(...pluginRoots('skills'));
   }
   for (const extra of options.extraPaths ?? []) {
     const full = expandPath(extra, cwd);

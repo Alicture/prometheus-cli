@@ -16,6 +16,7 @@ import {
 } from './config/index.js';
 import { setConfigKey, flattenConfig } from './config/cli.js';
 import { createSkillManager } from './skills/index.js';
+import { createCommandManager } from './skills/commands.js';
 import { App } from './ui/App.js';
 
 const cli = meow(
@@ -36,6 +37,8 @@ const cli = meow(
     $ prometheus skill info <name>     show a skill's details
     $ prometheus skill dirs            show every directory scanned for skills
     $ prometheus skill remove <name>   remove an installed skill
+    $ prometheus commands [filter]     list slash commands (from commands/ dirs and skills)
+    $ prometheus commands dirs         show every directory scanned for commands
 
   Config keys (examples)
     apiKey                 your Claude-compatible API key
@@ -192,6 +195,36 @@ async function main() {
       console.log(`  ${active} ${TIER_LABELS[t].padEnd(8)} ${modelForTier(config, t)}`);
     }
     console.log(`\nActive tier: ${TIER_LABELS[config.selectedTier]} · format: ${config.apiFormat}`);
+    return;
+  }
+
+  if (command === 'commands' || command === 'command') {
+    const config = loadConfig();
+    const manager = createCommandManager(config, createSkillManager(config).list());
+    const sub = rest[0];
+
+    if (sub === 'dirs' || sub === 'paths') {
+      console.log('Command search paths (highest precedence first):\n');
+      for (const root of manager.rootStatus()) {
+        const status = root.exists ? `${root.count} command(s)` : 'missing';
+        console.log(`  [${root.source}] ${root.label} — ${status}`);
+      }
+      return;
+    }
+
+    const filter = (sub === 'list' ? rest.slice(1) : rest).join(' ').trim().toLowerCase();
+    const all = manager
+      .list()
+      .filter((c) => !filter || c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter));
+    if (all.length === 0) {
+      console.log(filter ? `No commands match "${filter}".` : 'No commands found. Try: prometheus commands dirs');
+      return;
+    }
+    console.log(`${all.length} command(s)${filter ? ` matching "${filter}"` : ''}:\n`);
+    for (const c of all) {
+      console.log(`  /${c.name}${c.argumentHint ? ' ' + c.argumentHint : ''}`);
+      console.log(`    ${c.description || '(no description)'}  [${c.source}]`);
+    }
     return;
   }
 

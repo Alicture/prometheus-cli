@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
 import { SkillManager, createSkillManager, type Skill, type SkillRoot } from '../../skills/index.js';
+import {
+  CommandManager,
+  createCommandManager,
+  expandCommand,
+  type CommandRoot,
+  type PromptCommand,
+} from '../../skills/commands.js';
 import type { AgentEvent, ApprovalDecision, ApprovalRequest } from '../../types.js';
 import type { UIItem, UIStatus } from '../types.js';
 
@@ -16,7 +23,7 @@ export interface UseAgent {
   startup: string | null; // startup error, if any
   envLabel: string;
   begin: () => Promise<void>;
-  send: (text: string) => void;
+  send: (text: string, display?: string) => void;
   abort: () => void;
   pushNotice: (text: string, level?: 'info' | 'error') => void;
   clear: () => void;
@@ -30,6 +37,11 @@ export interface UseAgent {
   skillDirs: () => Array<SkillRoot & { exists: boolean; count: number }>;
   refreshSkills: () => void;
   removeSkill: (name: string) => void;
+  /** Slash commands discovered from Claude Code `commands/` directories. */
+  promptCommands: PromptCommand[];
+  commandDirs: () => Array<CommandRoot & { exists: boolean; count: number }>;
+  runPromptCommand: (command: PromptCommand, args: string) => void;
+  runSkill: (skill: Skill, args: string) => void;
 }
 
 export function useAgent(config: Config): UseAgent {
@@ -40,6 +52,19 @@ export function useAgent(config: Config): UseAgent {
   const sessionRef = useRef<AgentSession | null>(null);
   if (!sessionRef.current) sessionRef.current = new AgentSession(config, skills);
   const session = sessionRef.current;
+
+  const commandsRef = useRef<CommandManager | null>(null);
+  if (!commandsRef.current) commandsRef.current = createCommandManager(config, skills.list());
+  const commandManager = commandsRef.current;
+  const [promptCommands, setPromptCommands] = useState<PromptCommand[]>(() => commandManager.list());
+
+  const reloadCommands = useCallback(() => {
+    // Skills can bundle their own commands, so the command set is rebuilt from
+    // the current skill list.
+    commandManager.setSkills(skills.list());
+    setPromptCommands(commandManager.list());
+  }, [commandManager, skills]);
+
 
   const [history, setHistory] = useState<UIItem[]>([]);
   const [live, setLive] = useState<UIItem[]>([]);
@@ -227,13 +252,48 @@ export function useAgent(config: Config): UseAgent {
   }, [session, handleEvent, pushNotice]);
 
   const send = useCallback(
-    (text: string) => {
-      setHistory((h) => [...h, { id: nextId(), kind: 'user', text }]);
+    // `display` lets a slash command show its invocation in the transcript while
+    // the model receives the expanded prompt body.
+    (text: string, display?: string) => {
+      setHistory((h) => [...h, { id: nextId(), kind: 'user', text: display ?? text }]);
       setStatus((s) => ({ ...s, busy: true }));
       activeAssistantId.current = null;
       void session.sendMessage(text, handleEvent);
     },
     [session, handleEvent],
+  );
+
+  const commandDirs = useCallback(() => commandManager.rootStatus(), [commandManager]);
+
+  // Run a prompt command: the file's body (with arguments substituted) is sent
+  // as the user's turn, while the transcript keeps showing the invocation.
+  const runPromptCommand = useCallback(
+    (command: PromptCommand, args: string) => {
+      const prompt = expandCommand(command, args);
+      if (!prompt) {
+        pushNotice(`/${command.name} has an empty body (${command.path}).`, 'error');
+        return;
+      }
+      const header = command.allowedTools?.length
+        ? `Prefer these tools where they apply: ${command.allowedTools.join(', ')}.\n\n`
+        : '';
+      send(header + prompt, `/${command.name}${args.trim() ? ' ' + args.trim() : ''}`);
+    },
+    [send, pushNotice],
+  );
+
+  // Invoke a skill by name. The body is fetched through the Skill tool so the
+  // model also receives the skill's bundled file paths.
+  const runSkill = useCallback(
+    (skill: Skill, args: string) => {
+      const request = args.trim();
+      const prompt =
+        `Use the "${skill.name}" skill: call the Skill tool with name "${skill.name}" ` +
+        `to load its instructions, then follow them.` +
+        (request ? `\n\nRequest: ${request}` : '');
+      send(prompt, `/${skill.name}${request ? ' ' + request : ''}`);
+    },
+    [send],
   );
 
   const abort = useCallback(() => {
@@ -257,13 +317,14 @@ export function useAgent(config: Config): UseAgent {
       try {
         const installed = await skills.install(spec, only);
         session.reloadSkills();
+        reloadCommands();
         const lines = installed.map((s) => `  ${s.name} — ${s.description || '(no description)'}`);
         pushNotice(`Installed ${installed.length} skill(s):\n${lines.join('\n')}`);
       } catch (err) {
         pushNotice(`Skill install failed: ${(err as Error).message}`, 'error');
       }
     },
-    [skills, session, pushNotice],
+    [skills, session, pushNotice, reloadCommands],
   );
 
   const searchSkills = useCallback(
@@ -286,15 +347,17 @@ export function useAgent(config: Config): UseAgent {
 
   const refreshSkills = useCallback(() => {
     session.reloadSkills();
-  }, [session]);
+    reloadCommands();
+  }, [session, reloadCommands]);
 
   const removeSkill = useCallback(
     (name: string) => {
       const result = skills.remove(name);
       session.reloadSkills();
+      reloadCommands();
       pushNotice(result.ok ? `Removed skill: ${name}` : result.reason!, result.ok ? 'info' : 'error');
     },
-    [skills, session, pushNotice],
+    [skills, session, pushNotice, reloadCommands],
   );
 
   return {
@@ -319,5 +382,9 @@ export function useAgent(config: Config): UseAgent {
     skillDirs,
     refreshSkills,
     removeSkill,
+    promptCommands,
+    commandDirs,
+    runPromptCommand,
+    runSkill,
   };
 }
