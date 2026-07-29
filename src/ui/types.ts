@@ -12,7 +12,10 @@ export type UIItem =
       content: string;
       durationMs: number;
     }
-  | { id: string; kind: 'notice'; level: 'info' | 'error'; text: string };
+  | { id: string; kind: 'notice'; level: 'info' | 'error'; text: string }
+  // Rendered once at the top of the scrollback so it never occupies the
+  // redrawn (non-Static) region.
+  | { id: string; kind: 'header' };
 
 export interface UIStatus {
   sandbox: 'idle' | 'creating' | 'ready' | 'error';

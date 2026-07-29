@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, Static, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import type { Config, Tier } from '../config/index.js';
@@ -21,6 +21,9 @@ import { StatusBar } from './components/StatusBar.js';
 import { ModelPicker, type TierRow } from './components/ModelPicker.js';
 import { SlashSuggest, type SlashCommand } from './components/SlashSuggest.js';
 import { ApprovalPrompt } from './components/ApprovalPrompt.js';
+import { useTerminalSize } from './hooks/useTerminalSize.js';
+import { clampLiveItems } from './liveView.js';
+import type { UIItem } from './types.js';
 
 // Catalog of slash commands used for autocomplete.
 const COMMANDS: SlashCommand[] = [
@@ -67,6 +70,7 @@ const HELP = [
 export function App({ config }: { config: Config }) {
   const { exit } = useApp();
   const agent = useAgent(config);
+  const { columns, rows } = useTerminalSize();
   const [input, setInput] = useState('');
   const [tier, setTier] = useState<Tier>(config.selectedTier);
   // Mirror tier model IDs in state so edits re-render the header/picker.
@@ -427,15 +431,48 @@ export function App({ config }: { config: Config }) {
     agent.send(text);
   };
 
+  const header = <Header envLabel={agent.envLabel} tier={tier} model={model} />;
+
+  // The banner lives in <Static> so it stays in scrollback instead of being
+  // redrawn (and eventually dropped) with the live region.
+  const staticItems = useMemo<UIItem[]>(
+    () => [{ id: '__header__', kind: 'header' }, ...agent.history],
+    [agent.history],
+  );
+
+  // Reserve rows for everything rendered below the live region, then show only
+  // the tail of the live output that still fits. This keeps the redrawn region
+  // smaller than the terminal, so Ink can always erase it and the prompt stays
+  // on screen. Heights below are measured, not guessed.
+  const reserved =
+    2 + // StatusBar (top margin + line)
+    1 + // input line
+    1 + // "⋮ streaming" indicator, shown whenever we clamp
+    (agent.startup ? 3 : 0) +
+    (agent.pendingApproval
+      ? 7
+      : pickerOpen
+        ? ALL_TIERS.length + 4
+        : showSuggest
+          ? Math.min(suggestions.length, 6) + 1
+          : 0) +
+    2; // breathing room so a wrapped prompt never overflows
+  const liveBudget = Math.max(3, rows - reserved);
+  const liveView = clampLiveItems(agent.live, columns, liveBudget);
+
   return (
     <Box flexDirection="column">
-      <Static items={agent.history}>{(item) => <MessageItem key={item.id} item={item} />}</Static>
+      <Static items={staticItems}>
+        {(item) => <MessageItem key={item.id} item={item} header={header} />}
+      </Static>
 
       <Box flexDirection="column">
-        {agent.history.length === 0 ? <Header envLabel={agent.envLabel} tier={tier} model={model} /> : null}
+        {liveView.truncated ? (
+          <Text color={theme.muted}>⋮ (streaming — full output appears above when done)</Text>
+        ) : null}
 
-        {agent.live.map((item) => (
-          <MessageItem key={item.id} item={item} />
+        {liveView.items.map((item) => (
+          <MessageItem key={item.id} item={item} plain />
         ))}
 
         {agent.startup ? (
