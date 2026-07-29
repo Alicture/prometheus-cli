@@ -121,7 +121,8 @@ prometheus config set <key> <value>     # dotted keys supported
 | `selectedTier` | `hermes` / `athena` / `zeus` | `hermes` |
 | `modelHermes` / `modelAthena` / `modelZeus` | model IDs per tier | haiku / sonnet / opus |
 | `environment` | `local` / `docker` / `ssh` | `local` |
-| `docker.image` | sandbox image | `claude-sandbox` |
+| `docker.image` | sandbox image (must exist locally) | `claude-sandbox` |
+| `docker.workspace` | working dir inside the container | `/home/sandbox/workspace` |
 | `docker.host` | Docker daemon endpoint (else `DOCKER_HOST`) | default socket |
 | `docker.containerId` | reuse an existing container | — |
 | `docker.persistent` | keep container after exit | `false` |
@@ -154,6 +155,25 @@ prometheus config set ssh.workspace '~/project'
 prometheus config set environment docker
 prometheus config set docker.host unix:///Users/me/.colima/default/docker.sock
 ```
+</details>
+
+<details>
+<summary><b>Example: any Docker image (e.g. Kali)</b></summary>
+
+The image must already exist locally — pull or build it first. Set a workspace
+the container's user can write to (Kali runs as `root`):
+
+```bash
+docker pull kalilinux/kali-rolling
+prometheus config set environment docker
+prometheus config set docker.image kalilinux/kali-rolling
+prometheus config set docker.workspace /root/workspace
+```
+
+Containers are throwaway: each session creates one, labels it, and removes it on
+exit. A session that was killed before it could clean up leaves a container
+behind, which the next run reaps automatically — containers belonging to another
+*running* session are never touched. Set `docker.persistent true` to keep yours.
 </details>
 
 ## In-App Commands

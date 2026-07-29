@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Config } from '../../config/index.js';
 import { AgentSession } from '../../agent/loop.js';
 import { SkillManager, createSkillManager, type Skill, type SkillRoot } from '../../skills/index.js';
@@ -197,6 +197,16 @@ export function useAgent(config: Config): UseAgent {
       setStatus((s) => ({ ...s, sandbox: 'error' }));
     }
   }, [session, handleEvent, approve]);
+
+  // Release the sandbox when the app unmounts. This is the graceful path; the
+  // sandbox also registers a synchronous teardown for signals and hard exits.
+  useEffect(() => {
+    return () => {
+      void session.stop().catch(() => {
+        // best-effort teardown on the way out
+      });
+    };
+  }, [session]);
 
   // Tear down and recreate the sandbox from the current config (e.g. after the
   // user switches environment with /env or /docker at runtime).

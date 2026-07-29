@@ -1,9 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import type { ExecResult } from '../types.js';
 import type { DockerConfig } from '../config/index.js';
 import { spawnCapture, truncate } from '../utils/proc.js';
+import { registerTeardown } from './cleanup.js';
 import type { Sandbox, SandboxStatus } from './types.js';
+
+// Containers we create are tagged so they can be recognised later: OWNER_LABEL
+// holds the PID of the CLI that created them, which lets a new run tell its own
+// throwaway containers apart from those of another live session.
+const SANDBOX_LABEL = 'prometheus.sandbox';
+const OWNER_LABEL = 'prometheus.owner';
 
 // Runs commands inside a Docker container via the `docker` CLI, mirroring the
 // original Bun server's sandbox manager (docker run / exec / tee / cat).
@@ -14,6 +22,7 @@ export class DockerSandbox implements Sandbox {
   private commandTimeoutMs: number;
   private containerId = '';
   private ownsContainer = false;
+  private unregisterTeardown: (() => void) | null = null;
 
   constructor(cfg: DockerConfig, maxOutputSize: number, commandTimeoutMs: number) {
     this.cfg = cfg;
@@ -28,12 +37,13 @@ export class DockerSandbox implements Sandbox {
   }
 
   private async docker(args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<ExecResult> {
-    // Point the docker CLI at a custom daemon when configured (config wins over
-    // any inherited DOCKER_HOST so behaviour is reproducible).
-    const env = this.cfg.host
-      ? { ...process.env, DOCKER_HOST: this.cfg.host }
-      : process.env;
-    return spawnCapture('docker', args, { input: opts.input, timeoutMs: opts.timeoutMs, env });
+    return spawnCapture('docker', args, { input: opts.input, timeoutMs: opts.timeoutMs, env: this.dockerEnv() });
+  }
+
+  // Point the docker CLI at a custom daemon when configured (config wins over
+  // any inherited DOCKER_HOST so behaviour is reproducible).
+  private dockerEnv(): NodeJS.ProcessEnv {
+    return this.cfg.host ? { ...process.env, DOCKER_HOST: this.cfg.host } : process.env;
   }
 
   async start(onStatus?: SandboxStatus): Promise<void> {
@@ -76,14 +86,20 @@ export class DockerSandbox implements Sandbox {
       throw new Error(`docker image not found: ${this.cfg.image}`);
     }
 
-    // 4. Create a fresh container.
-    const name = `claude-sandbox-${randomUUID().slice(0, 8)}`;
+    // 4. Create a fresh container. Containers left behind by sessions that were
+    // killed before they could clean up are removed first.
+    await this.reapOrphans();
+    const name = `prometheus-sandbox-${randomUUID().slice(0, 8)}`;
     const run = await this.docker(
       [
         'run',
         '-d',
         '--name',
         name,
+        '--label',
+        `${SANDBOX_LABEL}=1`,
+        '--label',
+        `${OWNER_LABEL}=${process.pid}`,
         '--memory',
         this.cfg.memory,
         '--cpus',
@@ -105,8 +121,52 @@ export class DockerSandbox implements Sandbox {
     }
     this.containerId = run.stdout.trim();
     this.ownsContainer = true;
+    // Ink exits without unwinding the React tree, so removal is also driven by
+    // process teardown; otherwise every session would leak its container.
+    if (!this.cfg.persistent) {
+      const id = this.containerId;
+      this.unregisterTeardown = registerTeardown(() => this.removeSync(id));
+    }
     await this.ensureWorkdir();
     onStatus?.('ready');
+  }
+
+  // Remove throwaway containers whose creating process is gone. Containers
+  // belonging to a still-running session (or created without our labels) are
+  // left untouched.
+  private async reapOrphans(): Promise<void> {
+    const list = await this.docker(
+      ['ps', '-aq', '--filter', `label=${SANDBOX_LABEL}=1`],
+      { timeoutMs: 10_000 },
+    );
+    const ids = list.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return;
+
+    const inspect = await this.docker(
+      ['inspect', '-f', `{{.Id}} {{index .Config.Labels "${OWNER_LABEL}"}}`, ...ids],
+      { timeoutMs: 15_000 },
+    );
+    const orphans: string[] = [];
+    for (const line of inspect.stdout.split('\n')) {
+      const [id, owner] = line.trim().split(/\s+/);
+      if (!id) continue;
+      const pid = Number(owner);
+      // No owner recorded, or the owner is no longer running.
+      if (!Number.isInteger(pid) || pid <= 0 || !isProcessAlive(pid)) orphans.push(id);
+    }
+    if (orphans.length > 0) {
+      await this.docker(['rm', '-f', ...orphans], { timeoutMs: 30_000 });
+    }
+  }
+
+  // Synchronous counterpart of stop(), for use from process exit handlers where
+  // pending promises will never settle.
+  private removeSync(id: string): void {
+    spawnSync('docker', ['rm', '-f', id], {
+      env: this.dockerEnv(),
+      timeout: 10_000,
+      stdio: 'ignore',
+    });
   }
 
   private async ensureWorkdir(): Promise<void> {
@@ -144,8 +204,23 @@ export class DockerSandbox implements Sandbox {
   }
 
   async stop(): Promise<void> {
+    this.unregisterTeardown?.();
+    this.unregisterTeardown = null;
     if (this.ownsContainer && !this.cfg.persistent && this.containerId) {
       await this.docker(['rm', '-f', this.containerId]);
     }
+    this.containerId = '';
+    this.ownsContainer = false;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    // Signal 0 performs the permission/existence check without delivering it.
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but belongs to another user.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
