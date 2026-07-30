@@ -33,7 +33,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'skills', desc: 'list available skills (all sources)' },
   { name: 'skill', args: 'install <repo>', desc: 'install Claude Code skills from GitHub' },
   { name: 'commands', args: '[filter]', desc: 'list slash commands from skills and Claude Code' },
-  { name: 'env', args: '[local|docker|ssh]', desc: 'show or switch the execution environment' },
+  { name: 'env', args: '[local|docker|ssh] [image]', desc: 'show or switch the execution environment' },
   { name: 'permissions', args: '[ask|auto|readonly]', desc: 'view or set the tool permission mode' },
   { name: 'clear', desc: 'clear the conversation' },
   { name: 'quit', desc: 'exit Prometheus' },
@@ -73,6 +73,7 @@ const HELP = [
   '/<name> [args]         run a prompt command, e.g. /gsd:add-phase auth',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
+  '/env docker <image>    switch to docker with a specific image (must exist locally)',
   '/permissions           show the tool permission mode',
   '/permissions <mode>    set mode: ask | auto | readonly',
   '/clear                 clear the conversation',
@@ -370,21 +371,41 @@ export function App({ config }: { config: Config }) {
 
   const handleEnvCommand = (rest: string[]) => {
     if (rest.length === 0) {
+      const detail =
+        config.environment === 'docker'
+          ? `Image: ${config.docker.image} · workdir: ${config.docker.workspace}\n`
+          : config.environment === 'ssh'
+            ? `Host: ${config.ssh.username}@${config.ssh.host || '(unset)'}\n`
+            : `Workdir: ${config.local.workspace}\n`;
       agent.pushNotice(
         `Environment: ${agent.envLabel}\n` +
+          detail +
           `API: ${config.apiFormat} · base URL: ${config.baseURL || '(provider default)'}\n` +
-          `Switch with: /env <local|docker|ssh>`,
+          `Switch with: /env <local|docker|ssh>\n` +
+          `Pick an image with: /env docker <image>`,
       );
       return;
     }
     const parsed = EnvironmentSchema.safeParse(rest[0]);
     if (!parsed.success) {
-      agent.pushNotice('Usage: /env <local|docker|ssh>', 'error');
+      agent.pushNotice('Usage: /env <local|docker|ssh> [image]', 'error');
       return;
     }
+
+    // `/env docker <image>` switches and selects the image in one step; the
+    // image must already exist locally (the sandbox says so if it does not).
+    const image = rest.slice(1).join(' ').trim();
+    if (image && parsed.data !== 'docker') {
+      agent.pushNotice('An image can only be given for the docker environment.', 'error');
+      return;
+    }
+    if (image) config.docker.image = image;
+
     config.environment = parsed.data;
     saveConfig(config);
-    agent.pushNotice(`Environment → ${parsed.data}. Restarting sandbox…`);
+    agent.pushNotice(
+      `Environment → ${parsed.data}${image ? ` (image: ${image})` : ''}. Restarting sandbox…`,
+    );
     void agent.restart();
   };
 

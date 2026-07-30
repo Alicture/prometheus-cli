@@ -172,6 +172,13 @@ prometheus config set docker.image kalilinux/kali-rolling
 prometheus config set docker.workspace /root/workspace
 ```
 
+Or from inside the TUI, which switches and restarts the sandbox in one step:
+
+```text
+/env docker kalilinux/kali-rolling
+/env                                  # shows the active image and workdir
+```
+
 Containers are throwaway: each session creates one, labels it, and removes it on
 exit. A session that was killed before it could clean up leaves a container
 behind, which the next run reaps automatically — containers belonging to another
@@ -206,6 +213,7 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 | `/<skill> [request]` | run an installed skill, e.g. `/pdf merge a.pdf b.pdf` |
 | `/<name> [args]` | run a prompt command, e.g. `/gsd:add-phase auth` |
 | `/env` | show the current environment + API base URL |
+| `/env docker <image>` | switch to docker with a specific image |
 | `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
 | `/permissions [ask\|auto\|readonly]` | view or set the tool permission mode |
 | `/clear` | clear the conversation |
