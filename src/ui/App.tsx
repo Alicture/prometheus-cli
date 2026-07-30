@@ -33,7 +33,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'skills', desc: 'list available skills (all sources)' },
   { name: 'skill', args: 'install <repo>', desc: 'install Claude Code skills from GitHub' },
   { name: 'commands', args: '[filter]', desc: 'list slash commands from skills and Claude Code' },
-  { name: 'env', args: '[local|docker|ssh] [image]', desc: 'show or switch the execution environment' },
+  { name: 'env', args: '[local|docker|ssh] [image|container …]', desc: 'show or switch the execution environment' },
   { name: 'permissions', args: '[ask|auto|readonly]', desc: 'view or set the tool permission mode' },
   { name: 'clear', desc: 'clear the conversation' },
   { name: 'quit', desc: 'exit Prometheus' },
@@ -73,7 +73,8 @@ const HELP = [
   '/<name> [args]         run a prompt command, e.g. /gsd:add-phase auth',
   '/env                   show the current execution environment',
   '/env <local|docker|ssh>  switch environment and restart the sandbox',
-  '/env docker <image>    switch to docker with a specific image (must exist locally)',
+  '/env docker image <image>      switch to docker with a specific image (must exist locally)',
+  '/env docker container <name|id>  attach to an existing container (kept on exit; none to clear)',
   '/permissions           show the tool permission mode',
   '/permissions <mode>    set mode: ask | auto | readonly',
   '/clear                 clear the conversation',
@@ -370,10 +371,17 @@ export function App({ config }: { config: Config }) {
   };
 
   const handleEnvCommand = (rest: string[]) => {
+    const ENV_USAGE =
+      'Usage: /env <local|docker|ssh>\n' +
+      '       /env docker image <image>\n' +
+      '       /env docker container <name|id>';
     if (rest.length === 0) {
       const detail =
         config.environment === 'docker'
-          ? `Image: ${config.docker.image} · workdir: ${config.docker.workspace}\n`
+          ? (config.docker.containerId
+              ? `Container: ${config.docker.containerId} (reused, kept on exit)`
+              : `Image: ${config.docker.image} (fresh container)`) +
+            ` · workdir: ${config.docker.workspace}\n`
           : config.environment === 'ssh'
             ? `Host: ${config.ssh.username}@${config.ssh.host || '(unset)'}\n`
             : `Workdir: ${config.local.workspace}\n`;
@@ -381,31 +389,65 @@ export function App({ config }: { config: Config }) {
         `Environment: ${agent.envLabel}\n` +
           detail +
           `API: ${config.apiFormat} · base URL: ${config.baseURL || '(provider default)'}\n` +
-          `Switch with: /env <local|docker|ssh>\n` +
-          `Pick an image with: /env docker <image>`,
+          `Switch with:      /env <local|docker|ssh>\n` +
+          `Pick an image:    /env docker image <image>\n` +
+          `Reuse container:  /env docker container <name|id>  (none to clear)`,
       );
       return;
     }
     const parsed = EnvironmentSchema.safeParse(rest[0]);
     if (!parsed.success) {
-      agent.pushNotice('Usage: /env <local|docker|ssh> [image]', 'error');
+      agent.pushNotice(ENV_USAGE, 'error');
       return;
     }
 
-    // `/env docker <image>` switches and selects the image in one step; the
-    // image must already exist locally (the sandbox says so if it does not).
-    const image = rest.slice(1).join(' ').trim();
-    if (image && parsed.data !== 'docker') {
-      agent.pushNotice('An image can only be given for the docker environment.', 'error');
-      return;
+    // `/env docker …` switches and picks what to run against in one step: an
+    // image to spin a throwaway container from, or an existing container to
+    // attach to (which is then never removed on exit).
+    const args = rest.slice(1);
+    let image = '';
+    let container: string | null = null; // null = leave as configured
+    if (args.length > 0) {
+      if (parsed.data !== 'docker') {
+        agent.pushNotice('An image or container can only be given for the docker environment.', 'error');
+        return;
+      }
+      const [head, ...tail] = args;
+      const value = tail.join(' ').trim();
+      if (head === 'container') {
+        if (!value) {
+          agent.pushNotice('Usage: /env docker container <name|id>  (none to clear)', 'error');
+          return;
+        }
+        container = /^(none|off|clear)$/i.test(value) ? '' : value;
+      } else if (head === 'image') {
+        if (!value) {
+          agent.pushNotice('Usage: /env docker image <image>', 'error');
+          return;
+        }
+        image = value;
+      } else {
+        image = args.join(' ').trim();
+      }
     }
-    if (image) config.docker.image = image;
+    // A configured container always wins over the image, so choosing an image
+    // has to detach first or it would silently have no effect.
+    if (image) {
+      config.docker.image = image;
+      config.docker.containerId = '';
+    }
+    if (container !== null) config.docker.containerId = container;
 
     config.environment = parsed.data;
     saveConfig(config);
-    agent.pushNotice(
-      `Environment → ${parsed.data}${image ? ` (image: ${image})` : ''}. Restarting sandbox…`,
-    );
+    const what = image
+      ? ` (image: ${image})`
+      : container
+        ? ` (container: ${container})`
+        : container === ''
+          ? ' (detached from container)'
+          : '';
+    agent.pushNotice(`Environment → ${parsed.data}${what}. Restarting sandbox…`);
     void agent.restart();
   };
 

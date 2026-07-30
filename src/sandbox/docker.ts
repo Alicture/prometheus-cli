@@ -32,7 +32,9 @@ export class DockerSandbox implements Sandbox {
   }
 
   describe(): string {
-    const id = this.containerId ? this.containerId.slice(0, 12) : this.cfg.image;
+    if (!this.containerId) return `Docker: ${this.cfg.image}`;
+    // Full 64-char ids are unreadable; names and short ids are shown verbatim.
+    const id = /^[0-9a-f]{64}$/.test(this.containerId) ? this.containerId.slice(0, 12) : this.containerId;
     return `Docker: ${id}`;
   }
 
@@ -64,18 +66,34 @@ export class DockerSandbox implements Sandbox {
 
     // 2. Reuse an existing container if one was configured and is present.
     if (this.cfg.containerId) {
-      const inspect = await this.docker(['inspect', '-f', '{{.State.Running}}', this.cfg.containerId]);
+      const inspect = await this.docker([
+        'inspect',
+        '--type',
+        'container',
+        '-f',
+        '{{.State.Running}}',
+        this.cfg.containerId,
+      ]);
       if (inspect.exitCode === 0) {
         this.containerId = this.cfg.containerId;
         this.ownsContainer = false;
         if (inspect.stdout.trim() !== 'true') {
-          await this.docker(['start', this.containerId]);
+          const started = await this.docker(['start', this.containerId], { timeoutMs: 30_000 });
+          if (started.exitCode !== 0) {
+            const why = started.stderr.trim();
+            onStatus?.('error', `Cannot start container ${this.cfg.containerId}: ${why}`);
+            throw new Error('docker start failed: ' + why);
+          }
         }
         await this.ensureWorkdir();
         onStatus?.('ready');
         return;
       }
-      onStatus?.('error', `Configured container ${this.cfg.containerId} not found.`);
+      const hint =
+        `Container "${this.cfg.containerId}" not found. List candidates with \`docker ps -a\`, ` +
+        `then set one with \`prometheus config set docker.containerId <name|id>\` ` +
+        `(or clear it to run a fresh container from ${this.cfg.image}).`;
+      onStatus?.('error', hint);
       throw new Error(`container ${this.cfg.containerId} not found`);
     }
 

@@ -175,7 +175,7 @@ prometheus config set docker.workspace /root/workspace
 Or from inside the TUI, which switches and restarts the sandbox in one step:
 
 ```text
-/env docker kalilinux/kali-rolling
+/env docker image kalilinux/kali-rolling
 /env                                  # shows the active image and workdir
 ```
 
@@ -183,6 +183,31 @@ Containers are throwaway: each session creates one, labels it, and removes it on
 exit. A session that was killed before it could clean up leaves a container
 behind, which the next run reaps automatically — containers belonging to another
 *running* session are never touched. Set `docker.persistent true` to keep yours.
+</details>
+
+<details>
+<summary><b>Example: attach to a container you already have</b></summary>
+
+To keep working in one long-lived container — with your installed packages and
+files intact — point Prometheus at it instead of at an image:
+
+```bash
+docker ps -a                          # find the name or id
+prometheus config set environment docker
+prometheus config set docker.containerId my-kali
+prometheus config set docker.workspace /root/workspace
+```
+
+Or from inside the TUI:
+
+```text
+/env docker container my-kali         # attach and restart the sandbox
+/env docker container none            # detach; go back to fresh containers
+```
+
+An attached container is **never** removed on exit, and is started for you if it
+is stopped. `docker.containerId` takes precedence over `docker.image`, so
+choosing an image (`/env docker image …`) detaches first.
 </details>
 
 ## In-App Commands
@@ -213,7 +238,8 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 | `/<skill> [request]` | run an installed skill, e.g. `/pdf merge a.pdf b.pdf` |
 | `/<name> [args]` | run a prompt command, e.g. `/gsd:add-phase auth` |
 | `/env` | show the current environment + API base URL |
-| `/env docker <image>` | switch to docker with a specific image |
+| `/env docker image <image>` | switch to docker with a specific image |
+| `/env docker container <name\|id>` | attach to an existing container (`none` to detach) |
 | `/env <local\|docker\|ssh>` | switch environment and restart the sandbox |
 | `/permissions [ask\|auto\|readonly]` | view or set the tool permission mode |
 | `/clear` | clear the conversation |
