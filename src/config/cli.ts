@@ -11,7 +11,6 @@ function coerce(value: string): unknown {
 // Set a dotted key (e.g. "docker.image", "ssh.host", "apiKey") on the config
 // and re-validate. Returns the new validated config or throws on invalid key.
 export function setConfigKey(config: Config, dottedKey: string, rawValue: string): Config {
-  const value = coerce(rawValue);
   const parts = dottedKey.split('.');
   const draft: any = structuredClone(config);
   let cursor = draft;
@@ -21,7 +20,13 @@ export function setConfigKey(config: Config, dottedKey: string, rawValue: string
     }
     cursor = cursor[parts[i]];
   }
-  cursor[parts[parts.length - 1]] = value;
+  const leaf = parts[parts.length - 1];
+  // List-valued settings (skills.paths, permissions.allow, …) are given as a
+  // comma- or space-separated string; an empty value clears them.
+  const value = Array.isArray(cursor[leaf])
+    ? rawValue.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
+    : coerce(rawValue);
+  cursor[leaf] = value;
   return ConfigSchema.parse(draft);
 }
 

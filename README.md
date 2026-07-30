@@ -137,6 +137,7 @@ prometheus config set <key> <value>     # dotted keys supported
 | `skills.includeClaude` | scan Claude Code skill dirs (`~/.claude`, `~/.agents`, plugins) | `true` |
 | `skills.paths` | extra directories to scan for skills | `[]` |
 | `skills.disabled` | skill names to hide from the model | `[]` |
+| `skills.hostSkills` | skills that run on your machine, not in the sandbox | `[]` |
 
 <details>
 <summary><b>Example: remote SSH environment</b></summary>
@@ -231,6 +232,7 @@ Type `/` to open the **command autocomplete** menu — `↑`/`↓` to select, `T
 | `/skill search <repo>` | list the skills a repo provides |
 | `/skill info <name>` | show a skill's metadata, path, bundled files |
 | `/skill dirs` | show every directory scanned for skills |
+| `/skill host [add\|rm] <name…>` | run a skill on your machine instead of the sandbox |
 | `/skill reload` | rescan skill directories |
 | `/skill remove <name>` | remove an installed skill |
 | `/commands [filter]` | list prompt commands from `commands/` dirs and skills |
@@ -333,7 +335,8 @@ prometheus skill remove pdf
 ```
 
 Everything is also available in the TUI: `/skills`, `/skill search`,
-`/skill install`, `/skill info`, `/skill dirs`, `/skill reload`, `/skill remove`.
+`/skill install`, `/skill info`, `/skill dirs`, `/skill host`, `/skill reload`,
+`/skill remove`.
 
 ### How skills reach the model
 
@@ -346,6 +349,40 @@ progressive-disclosure model Claude Code uses.
 
 Skills installed by Prometheus live in `~/.prometheus/skills/`. Skills discovered
 from Claude Code directories are read-only (remove them with Claude Code instead).
+
+### Skills in a sandbox
+
+Skills are installed on **your machine**, but tools run **in the environment** — so
+in Docker or over SSH a skill's bundled `scripts/` would not exist where its
+commands run. Prometheus copies a skill's directory into the environment the first
+time that skill is loaded (preserving the executable bit) and hands the model the
+path *inside* the sandbox, under `<workdir>/.prometheus/skills/<name>`. Skills that
+ship nothing but `SKILL.md` are never copied — their content is already inlined.
+
+Some skills can only ever work on your machine: they drive a desktop app, a CLI you
+installed locally, or files no container can see. List those as **host-only** and
+they get a separate `HostBash` tool that runs on the host, while everything else
+stays in the sandbox:
+
+```bash
+prometheus skill host obsidian-cli      # mark it (repeat args for several)
+prometheus skill host                   # show the list
+prometheus skill host none              # clear it
+```
+
+```text
+/skill host add obsidian-cli
+/skill host remove obsidian-cli
+```
+
+Loading a host-only skill tells the model to use `HostBash` and keeps the host paths
+in its instructions. `HostBash` still goes through the permission prompt, is only
+offered when host-only skills are configured, and is omitted entirely when the
+environment is already `local`.
+
+> Ordinary skills still need their **runtime** in the environment — a skill calling
+> `python3` or `node` only works if the image has it. Bake it into your image, or
+> mark the skill host-only.
 
 ### Running a skill directly
 
@@ -397,6 +434,7 @@ Tune discovery in your config:
 | `skills.includeClaude` | scan `~/.claude` and `~/.agents` skill and command dirs | `true` |
 | `skills.paths` | extra directories to scan | `[]` |
 | `skills.disabled` | skill names to hide from the model | `[]` |
+| `skills.hostSkills` | skills whose commands run on your machine (`HostBash`) | `[]` |
 
 ## Architecture
 

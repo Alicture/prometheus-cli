@@ -4,7 +4,17 @@ import type { Skill } from '../skills/index.js';
 // (progressive disclosure), so cap them to keep the preamble bounded.
 const MAX_DESC = 400;
 
-export function buildSystemPrompt(workdir: string, skills: Skill[] = []): string {
+export interface SystemPromptOptions {
+  /** Skills that must run on the user's machine rather than in the sandbox. */
+  hostSkills?: string[];
+}
+
+export function buildSystemPrompt(
+  workdir: string,
+  skills: Skill[] = [],
+  opts: SystemPromptOptions = {},
+): string {
+  const hostSkills = opts.hostSkills ?? [];
   const lines = [
     'You are Prometheus, an agentic coding assistant running in a terminal.',
     'You help the user with software engineering tasks by reading and writing files and running commands.',
@@ -21,6 +31,13 @@ export function buildSystemPrompt(workdir: string, skills: Skill[] = []): string
     '- Glob: find files by glob pattern.',
   ];
 
+  if (hostSkills.length > 0) {
+    lines.push(
+      "- HostBash: run a command on the user's own machine, outside the sandbox. Use it ONLY " +
+        `for these host-only skills: ${hostSkills.join(', ')}. Everything else uses Bash.`,
+    );
+  }
+
   if (skills.length > 0) {
     lines.push('- Skill: load full instructions for an available skill by name.');
     lines.push('');
@@ -28,10 +45,12 @@ export function buildSystemPrompt(workdir: string, skills: Skill[] = []): string
       `Available skills (${skills.length}). Each entry is a name + when to use it; call the ` +
         'Skill tool with the name to load its full instructions before acting on it:',
     );
+    const isHostSkill = new Set(hostSkills.map((n) => n.toLowerCase()));
     for (const s of skills) {
       const desc = s.description || '(no description)';
       const trimmed = desc.length > MAX_DESC ? `${desc.slice(0, MAX_DESC).trimEnd()}…` : desc;
-      lines.push(`- ${s.name}: ${trimmed}`);
+      const tag = isHostSkill.has(s.name.toLowerCase()) ? ' [host-only — use HostBash]' : '';
+      lines.push(`- ${s.name}${tag}: ${trimmed}`);
     }
   }
 

@@ -144,6 +144,38 @@ const Glob: ToolDefinition = {
   },
 };
 
+// Escape hatch for skills that can only work on this machine (host CLIs, GUI
+// apps, local files). Added to the tool list only when such skills are
+// configured and the sandbox is not already the host.
+export const HostBash: ToolDefinition = {
+  name: 'HostBash',
+  description:
+    'Run a bash command directly on the user\'s own machine, OUTSIDE the sandbox. Use this ' +
+    'ONLY for skills the loaded skill instructions explicitly mark as host-only — those need ' +
+    'CLIs, desktop apps or files that exist on the host and not in the sandbox. For every ' +
+    'other command use Bash, which runs in the sandbox.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'The bash command to execute on the host.' },
+      timeout: { type: 'number', description: 'Optional timeout in seconds.' },
+    },
+    required: ['command'],
+  },
+  async run(input, ctx) {
+    if (!ctx.execHost) {
+      return 'HostBash is not available in this session.';
+    }
+    const command = String(input.command ?? '');
+    const timeoutMs = input.timeout ? Number(input.timeout) * 1000 : undefined;
+    const res = await ctx.execHost(command, { timeoutMs });
+    let out = res.stdout;
+    if (res.stderr.trim()) out += (out ? '\n' : '') + res.stderr;
+    if (res.exitCode !== 0) out += `\n[exit code ${res.exitCode}]`;
+    return out.trim() || '(no output)';
+  },
+};
+
 export const allTools: ToolDefinition[] = [Bash, FileRead, FileWrite, FileEdit, Grep, Glob];
 
 export function getToolByName(name: string): ToolDefinition | undefined {

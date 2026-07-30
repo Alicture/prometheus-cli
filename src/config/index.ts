@@ -85,6 +85,10 @@ export const SkillsConfigSchema = z.object({
   paths: z.array(z.string()).default([]),
   // Skill names to hide from the model.
   disabled: z.array(z.string()).default([]),
+  // Skills that only work on this machine — they drive host CLIs, GUI apps or
+  // local files that no container or remote host can see. Their commands are
+  // run with the HostBash tool instead of Bash.
+  hostSkills: z.array(z.string()).default([]),
 });
 
 export const ConfigSchema = z.object({

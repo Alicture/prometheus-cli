@@ -66,6 +66,7 @@ const HELP = [
   '/skill search <repo>   list the skills a repo provides (no install)',
   '/skill info <name>     show a skill\'s details',
   '/skill dirs            show every directory scanned for skills',
+  '/skill host [add|rm] <name…>  run a skill on your machine, not in the sandbox',
   '/skill reload          rescan skill directories',
   '/skill remove <name>   remove an installed skill',
   '/commands [filter]     list prompt commands (from commands/ dirs and skills)',
@@ -208,6 +209,9 @@ export function App({ config }: { config: Config }) {
         `  source: ${skill.source} — ${skill.origin}`,
         `  path:   ${skill.path}`,
       ];
+      if (config.skills.hostSkills.some((n) => n.toLowerCase() === skill.name.toLowerCase())) {
+        lines.push('  host:   host-only — runs on your machine via HostBash, not in the sandbox');
+      }
       if (skill.allowedTools?.length) lines.push(`  tools:  ${skill.allowedTools.join(', ')}`);
       if (skill.resources.length) lines.push(`  files:  ${skill.resources.slice(0, 8).join(', ')}`);
       agent.pushNotice(lines.join('\n'));
@@ -225,6 +229,55 @@ export function App({ config }: { config: Config }) {
       agent.pushNotice(`Reloaded skills (${agent.listSkills().length} available).`);
       return;
     }
+    if (sub === 'host') {
+      const args = rest.slice(1).filter(Boolean);
+      const current = config.skills.hostSkills;
+      if (args.length === 0) {
+        agent.pushNotice(
+          (current.length
+            ? `Host-only skills: ${current.join(', ')}`
+            : 'No host-only skills configured.') +
+            '\nThese run on your machine (HostBash) instead of the sandbox — for skills that\n' +
+            'drive local apps, CLIs or files a container cannot see.\n' +
+            'Add:    /skill host add <name…>\n' +
+            'Remove: /skill host remove <name…>  (or `none` to clear all)',
+        );
+        return;
+      }
+      const [op, ...names] = args;
+      const known = agent.listSkills();
+      const resolve = (n: string) => known.find((s) => s.name.toLowerCase() === n.toLowerCase())?.name ?? n;
+      let next: string[];
+      if (op === 'add') {
+        if (names.length === 0) {
+          agent.pushNotice('Usage: /skill host add <name…>', 'error');
+          return;
+        }
+        const unknown = names.filter((n) => !known.some((s) => s.name.toLowerCase() === n.toLowerCase()));
+        if (unknown.length) {
+          agent.pushNotice(`Unknown skill(s): ${unknown.join(', ')}`, 'error');
+          return;
+        }
+        next = [...new Set([...current, ...names.map(resolve)])];
+      } else if (op === 'remove' || op === 'rm') {
+        if (names.length === 0) {
+          agent.pushNotice('Usage: /skill host remove <name…>  (or `none`)', 'error');
+          return;
+        }
+        const drop = new Set(names.map((n) => n.toLowerCase()));
+        next = drop.has('none') ? [] : current.filter((n) => !drop.has(n.toLowerCase()));
+      } else {
+        agent.pushNotice('Usage: /skill host [add|remove] <name…>', 'error');
+        return;
+      }
+      config.skills.hostSkills = next;
+      saveConfig(config);
+      agent.refreshSkills();
+      agent.pushNotice(
+        next.length ? `Host-only skills: ${next.join(', ')}` : 'Host-only skills cleared.',
+      );
+      return;
+    }
     if (sub === 'remove' || sub === 'rm') {
       const name = rest.slice(1).join(' ').trim();
       if (!name) {
@@ -235,7 +288,7 @@ export function App({ config }: { config: Config }) {
       return;
     }
     agent.pushNotice(
-      'Usage: /skill install <repo> [name…] | search <repo> | info <name> | dirs | reload | remove <name>',
+      'Usage: /skill install <repo> [name…] | search <repo> | info <name> | dirs | host | reload | remove <name>',
       'error',
     );
   };

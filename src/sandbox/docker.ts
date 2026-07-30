@@ -17,6 +17,7 @@ const OWNER_LABEL = 'prometheus.owner';
 // original Bun server's sandbox manager (docker run / exec / tee / cat).
 export class DockerSandbox implements Sandbox {
   readonly workdir: string;
+  readonly isHost = false;
   private cfg: DockerConfig;
   private maxOutputSize: number;
   private commandTimeoutMs: number;
@@ -218,6 +219,18 @@ export class DockerSandbox implements Sandbox {
     const res = await this.docker(['exec', '-i', this.containerId, 'tee', path], { input: content });
     if (res.exitCode !== 0) {
       throw new Error(res.stderr.trim() || `cannot write ${path}`);
+    }
+  }
+
+  // `docker cp <dir>/. <container>:<dest>` copies the *contents* of the source
+  // directory and preserves permission bits, so bundled scripts stay runnable.
+  async pushDir(hostDir: string, dest: string): Promise<void> {
+    await this.docker(['exec', this.containerId, 'mkdir', '-p', dest]);
+    const res = await this.docker(['cp', `${hostDir}/.`, `${this.containerId}:${dest}`], {
+      timeoutMs: 60_000,
+    });
+    if (res.exitCode !== 0) {
+      throw new Error(res.stderr.trim() || `cannot copy ${hostDir} into the container`);
     }
   }
 

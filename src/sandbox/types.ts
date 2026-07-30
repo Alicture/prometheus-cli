@@ -10,6 +10,10 @@ export interface Sandbox {
   // The working directory inside the environment.
   readonly workdir: string;
 
+  // True when the environment IS this machine, so host paths are already
+  // reachable and files never need to be transferred.
+  readonly isHost: boolean;
+
   // Human-readable description for the status bar (e.g. "Docker: claude-sandbox").
   describe(): string;
 
@@ -24,6 +28,10 @@ export interface Sandbox {
 
   // Write a file (creating parent directories as needed).
   writeFile(path: string, content: string): Promise<void>;
+
+  // Copy a directory from this machine into the environment, preserving file
+  // modes so bundled scripts stay executable.
+  pushDir(hostDir: string, dest: string): Promise<void>;
 
   // Tear down (no-op for local/persistent backends).
   stop(): Promise<void>;

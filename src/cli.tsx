@@ -36,6 +36,7 @@ const cli = meow(
     $ prometheus skill search <repo>   list the skills a repo provides (no install)
     $ prometheus skill info <name>     show a skill's details
     $ prometheus skill dirs            show every directory scanned for skills
+    $ prometheus skill host [name…]    list/set skills that run on the host, not the sandbox
     $ prometheus skill remove <name>   remove an installed skill
     $ prometheus commands [filter]     list slash commands (from commands/ dirs and skills)
     $ prometheus commands dirs         show every directory scanned for commands
@@ -136,6 +137,32 @@ async function main() {
         console.log(`  [${root.source}] ${root.label} — ${status}`);
       }
       console.log(`\nInstall target: ${skills.installDir}`);
+      return;
+    }
+
+    if (sub === 'host') {
+      const cfg = loadConfig();
+      const names = rest.slice(1).filter(Boolean);
+      if (names.length === 0) {
+        const list = cfg.skills.hostSkills;
+        console.log(
+          list.length ? `Host-only skills: ${list.join(', ')}` : 'No host-only skills configured.',
+        );
+        console.log(
+          '\nThese run on this machine (HostBash) instead of the sandbox — for skills that\n' +
+            'drive local applications, CLIs or files a container cannot see.\n' +
+            'Set with: prometheus skill host <name…>   (`none` clears the list)',
+        );
+        return;
+      }
+      const next = names.length === 1 && names[0] === 'none' ? [] : names;
+      const unknown = next.filter((n) => !skills.get(n));
+      if (unknown.length) {
+        console.error(`Unknown skill(s): ${unknown.join(', ')}`);
+        process.exit(1);
+      }
+      saveConfig(setConfigKey(cfg, 'skills.hostSkills', next.join(',')));
+      console.log(next.length ? `Host-only skills: ${next.join(', ')}` : 'Host-only skills cleared.');
       return;
     }
 

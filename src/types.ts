@@ -56,6 +56,9 @@ export interface ToolContext {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   workdir: string;
+  // Runs on this machine rather than in the sandbox. Only present when the
+  // sandbox is not already the host and host-only skills are configured.
+  execHost?(command: string, opts?: { cwd?: string; timeoutMs?: number }): Promise<ExecResult>;
 }
 
 export interface ExecResult {

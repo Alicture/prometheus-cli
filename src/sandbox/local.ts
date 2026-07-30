@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { ExecResult } from '../types.js';
 import type { LocalConfig } from '../config/index.js';
@@ -9,6 +9,7 @@ import type { Sandbox, SandboxStatus } from './types.js';
 // development or when the user has no Docker / remote host.
 export class LocalSandbox implements Sandbox {
   readonly workdir: string;
+  readonly isHost = true;
   private maxOutputSize: number;
 
   constructor(cfg: LocalConfig, maxOutputSize: number) {
@@ -54,5 +55,14 @@ export class LocalSandbox implements Sandbox {
 
   async stop(): Promise<void> {
     /* nothing to tear down */
+  }
+
+  // Callers normally skip this (isHost is true), so this only runs when a copy
+  // is explicitly wanted.
+  async pushDir(hostDir: string, dest: string): Promise<void> {
+    const from = resolve(hostDir);
+    const to = this.resolvePath(dest);
+    if (from === to) return;
+    await cp(from, to, { recursive: true });
   }
 }

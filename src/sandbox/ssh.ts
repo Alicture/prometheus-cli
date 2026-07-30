@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { Client, type SFTPWrapper } from 'ssh2';
 import type { ExecResult } from '../types.js';
 import type { SSHConfig } from '../config/index.js';
@@ -9,6 +11,7 @@ import type { Sandbox, SandboxStatus } from './types.js';
 // option — the user points Prometheus at any Linux box they can SSH into.
 export class SSHSandbox implements Sandbox {
   workdir: string;
+  readonly isHost = false;
   private cfg: SSHConfig;
   private maxOutputSize: number;
   private commandTimeoutMs: number;
@@ -135,6 +138,28 @@ export class SSHSandbox implements Sandbox {
     return new Promise((resolve, reject) => {
       sftp.writeFile(full, content, (err) => (err ? reject(err) : resolve()));
     });
+  }
+
+  // Ship the directory as a gzipped tarball (over SFTP, so it is not limited by
+  // the shell's argument size) and unpack it remotely. tar preserves the
+  // permission bits that make bundled scripts executable.
+  async pushDir(hostDir: string, dest: string): Promise<void> {
+    const tar = execFileSync('tar', ['-czf', '-', '-C', hostDir, '.'], {
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    const remoteDest = this.expand(dest);
+    const tmp = `/tmp/prometheus-push-${randomUUID().slice(0, 8)}.tgz`;
+    const sftp = await this.sftp();
+    await new Promise<void>((resolve, reject) => {
+      sftp.writeFile(tmp, tar, (err) => (err ? reject(err) : resolve()));
+    });
+    const res = await this.rawExec(
+      `mkdir -p ${this.shellQuote(remoteDest)} && tar -xzf ${this.shellQuote(tmp)} -C ${this.shellQuote(remoteDest)}; rc=$?; rm -f ${this.shellQuote(tmp)}; exit $rc`,
+      120_000,
+    );
+    if (res.exitCode !== 0) {
+      throw new Error(res.stderr.trim() || `cannot copy ${hostDir} to the remote host`);
+    }
   }
 
   async stop(): Promise<void> {

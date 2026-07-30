@@ -2,10 +2,11 @@ import type { Config } from '../config/index.js';
 import { modelForTier } from '../config/index.js';
 import type { Sandbox } from '../sandbox/index.js';
 import { createSandbox } from '../sandbox/index.js';
+import { LocalSandbox } from '../sandbox/local.js';
 import type { LLMClient } from '../llm/index.js';
 import { createLLMClient } from '../llm/index.js';
-import { allTools } from '../tools/index.js';
-import { makeSkillTool } from '../tools/skill.js';
+import { allTools, HostBash } from '../tools/index.js';
+import { makeSkillTool, type SkillPlacement } from '../tools/skill.js';
 import { SkillManager, createSkillManager, type Skill } from '../skills/index.js';
 import type {
   AgentEvent,
@@ -14,15 +15,21 @@ import type {
   ContentBlock,
   ConversationMessage,
   EventSink,
+  ExecResult,
   ToolContext,
   ToolDefinition,
 } from '../types.js';
 import { buildSystemPrompt } from './prompt.js';
 import { estimateCostUSD } from './pricing.js';
 
+// Where a skill's bundled files are copied inside the sandbox, relative to the
+// working directory (which is writable by definition).
+const SANDBOX_SKILLS_DIR = '.prometheus/skills';
+
 // One-line, human-readable summary of a tool call for approval prompts/logs.
 function summarizeTool(name: string, input: Record<string, unknown>): string {
   if (name === 'Bash') return String(input.command ?? '');
+  if (name === 'HostBash') return `on host: ${String(input.command ?? '')}`;
   if (name === 'FileWrite' || name === 'FileEdit' || name === 'FileRead') return String(input.path ?? '');
   if (name === 'Grep') return `pattern ${String(input.pattern ?? '')}`;
   if (name === 'Glob') return String(input.pattern ?? '');
@@ -50,6 +57,13 @@ export class AgentSession {
   private approver?: Approver;
   // Tool names approved for the rest of this session ("always allow").
   private sessionAllow = new Set<string>();
+  // Lazily created executor for host-only skills; only used when the sandbox is
+  // something other than this machine.
+  private hostExec: LocalSandbox | null = null;
+  // Skills whose bundled files have already been copied into the sandbox,
+  // mapped to the path they were copied to. Cleared whenever the sandbox is
+  // replaced.
+  private pushedSkills = new Map<string, string>();
 
   constructor(config: Config, skills: SkillManager = createSkillManager(config)) {
     this.config = config;
@@ -61,8 +75,21 @@ export class AgentSession {
       readFile: (p) => this.sandbox.readFile(p),
       writeFile: (p, c) => this.sandbox.writeFile(p, c),
       workdir: this.sandbox['workdir'] as string,
+      execHost: (cmd, opts) => this.execOnHost(cmd, opts),
     };
     this.rebuildTools();
+  }
+
+  // Runs a command on this machine, for skills that cannot work anywhere else.
+  private async execOnHost(
+    command: string,
+    opts?: { cwd?: string; timeoutMs?: number },
+  ): Promise<ExecResult> {
+    if (!this.hostExec) {
+      this.hostExec = new LocalSandbox({ workspace: process.cwd() }, this.config.maxOutputSize);
+      await this.hostExec.start();
+    }
+    return this.hostExec.exec(command, opts);
   }
 
   // Register the UI callback used to request tool-execution approval.
@@ -93,12 +120,56 @@ export class AgentSession {
   }
 
   // Compose the active tool list: base tools plus a Skill tool when any skills
-  // are installed. Call after skills change.
+  // are installed, plus HostBash when host-only skills need to reach this
+  // machine. Call after skills change.
   private rebuildTools(): void {
     this.loadedSkills = this.skills.list();
     this.tools = [...allTools];
-    if (this.loadedSkills.length > 0) this.tools.push(makeSkillTool(this.skills));
+    if (this.hostSkillsActive()) this.tools.push(HostBash);
+    if (this.loadedSkills.length > 0) {
+      this.tools.push(
+        makeSkillTool(
+          this.skills,
+          (skill) => this.placeSkill(skill),
+          this.hostSkillsActive() ? this.config.skills.hostSkills : [],
+        ),
+      );
+    }
     this.toolMap = new Map(this.tools.map((t) => [t.name, t]));
+  }
+
+  // Host-only skills are pointless when the sandbox already IS the host: Bash
+  // reaches everything, so no escape hatch is offered.
+  private hostSkillsActive(): boolean {
+    return this.config.skills.hostSkills.length > 0 && !this.sandbox.isHost;
+  }
+
+  private isHostSkill(name: string): boolean {
+    return this.config.skills.hostSkills.some((n) => n.toLowerCase() === name.toLowerCase());
+  }
+
+  // Skills are installed on this machine, but tools run in the sandbox, so a
+  // skill's bundled scripts are invisible there. Copy them in on demand and
+  // report the path that the model's tools can actually reach.
+  private async placeSkill(skill: Skill): Promise<SkillPlacement> {
+    if (this.isHostSkill(skill.name)) {
+      return { path: skill.path, onHost: true, hostOnly: !this.sandbox.isHost };
+    }
+    // Nothing to copy: the sandbox is this machine, or SKILL.md (already
+    // inlined above) is the skill's only file.
+    if (this.sandbox.isHost) return { path: skill.path, onHost: true };
+    if (skill.resources.length === 0) return { path: skill.path, onHost: true };
+
+    const cached = this.pushedSkills.get(skill.name);
+    if (cached) return { path: cached, onHost: false };
+    const dest = `${this.toolCtx.workdir}/${SANDBOX_SKILLS_DIR}/${skill.name}`;
+    try {
+      await this.sandbox.pushDir(skill.path, dest);
+      this.pushedSkills.set(skill.name, dest);
+      return { path: dest, onHost: false };
+    } catch (err) {
+      return { path: skill.path, onHost: true, error: (err as Error).message };
+    }
   }
 
   describeEnvironment(): string {
@@ -127,8 +198,12 @@ export class AgentSession {
       // best-effort teardown
     }
     this.sandbox = createSandbox(this.config);
+    this.pushedSkills.clear();
     this.started = false;
     await this.start(sink);
+    // isHost may have changed with the environment, which decides whether
+    // HostBash is offered.
+    this.rebuildTools();
   }
 
   abort(): void {
@@ -173,7 +248,9 @@ export class AgentSession {
     this.messages.push({ role: 'user', content: [{ type: 'text', text: userText }] });
 
     const model = modelForTier(this.config);
-    const system = buildSystemPrompt(this.workdir, this.loadedSkills);
+    const system = buildSystemPrompt(this.workdir, this.loadedSkills, {
+      hostSkills: this.hostSkillsActive() ? this.config.skills.hostSkills : [],
+    });
     this.abortController = new AbortController();
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
