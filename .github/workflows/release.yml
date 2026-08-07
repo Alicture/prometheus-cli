@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Package release artifact
+        run: |
+          tar -czf prometheus-cli-${{ github.ref_name }}.tar.gz dist/ package.json README.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: prometheus-cli-${{ github.ref_name }}.tar.gz
+          generate_release_notes: true
